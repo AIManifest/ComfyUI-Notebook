@@ -1,6 +1,6 @@
 import os
 import importlib.util
-from comfy.cli_args import args
+# from comfy.cli_args import args
 
 #Can't use pytorch to get the GPU names because the cuda malloc has to be set before the first import.
 def get_gpu_names():
@@ -36,15 +36,12 @@ def get_gpu_names():
     else:
         return set()
 
-blacklist = {"GeForce GTX TITAN X", "GeForce GTX 980", "GeForce GTX 970", "GeForce GTX 960", "GeForce GTX 950", "GeForce 945M",
-                "GeForce 940M", "GeForce 930M", "GeForce 920M", "GeForce 910M", "GeForce GTX 750", "GeForce GTX 745", "Quadro K620",
-                "Quadro K1200", "Quadro K2200", "Quadro M500", "Quadro M520", "Quadro M600", "Quadro M620", "Quadro M1000",
-                "Quadro M1200", "Quadro M2000", "Quadro M2200", "Quadro M3000", "Quadro M4000", "Quadro M5000", "Quadro M5500", "Quadro M6000",
-                "GeForce MX110", "GeForce MX130", "GeForce 830M", "GeForce 840M", "GeForce GTX 850M", "GeForce GTX 860M",
-                "GeForce GTX 1650", "GeForce GTX 1630"
-                }
-
 def cuda_malloc_supported():
+    blacklist = {"GeForce GTX TITAN X", "GeForce GTX 980", "GeForce GTX 970", "GeForce GTX 960", "GeForce GTX 950", "GeForce 945M",
+                 "GeForce 940M", "GeForce 930M", "GeForce 920M", "GeForce 910M", "GeForce GTX 750", "GeForce GTX 745", "Quadro K620",
+                 "Quadro K1200", "Quadro K2200", "Quadro M500", "Quadro M520", "Quadro M600", "Quadro M620", "Quadro M1000",
+                 "Quadro M1200", "Quadro M2000", "Quadro M2200", "Quadro M3000", "Quadro M4000", "Quadro M5000", "Quadro M5500", "Quadro M6000"}
+
     try:
         names = get_gpu_names()
     except:
@@ -56,8 +53,8 @@ def cuda_malloc_supported():
                     return False
     return True
 
-
-if not args.cuda_malloc:
+cuda_malloc=True
+if not cuda_malloc:
     try:
         version = ""
         torch_spec = importlib.util.find_spec("torch")
@@ -69,12 +66,12 @@ if not args.cuda_malloc:
                 spec.loader.exec_module(module)
                 version = module.__version__
         if int(version[0]) >= 2: #enable by default for torch version 2.0 and up
-            args.cuda_malloc = cuda_malloc_supported()
+            cuda_malloc = cuda_malloc_supported()
     except:
         pass
 
-
-if args.cuda_malloc and not args.disable_cuda_malloc:
+disable_cuda_malloc=False
+if cuda_malloc and not disable_cuda_malloc:
     env_var = os.environ.get('PYTORCH_CUDA_ALLOC_CONF', None)
     if env_var is None:
         env_var = "backend:cudaMallocAsync"

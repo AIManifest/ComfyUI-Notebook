@@ -189,13 +189,12 @@ def sampling_function(model_function, x, timestep, uncond, cond, cond_scale, con
                     continue
 
                 to_run += [(p, COND)]
-            if uncond is not None:
-                for x in uncond:
-                    p = get_area_and_mult(x, x_in, cond_concat_in, timestep)
-                    if p is None:
-                        continue
+            for x in uncond:
+                p = get_area_and_mult(x, x_in, cond_concat_in, timestep)
+                if p is None:
+                    continue
 
-                    to_run += [(p, UNCOND)]
+                to_run += [(p, UNCOND)]
 
             while len(to_run) > 0:
                 first = to_run[0]
@@ -283,9 +282,6 @@ def sampling_function(model_function, x, timestep, uncond, cond, cond_scale, con
 
 
         max_total_area = model_management.maximum_batch_area()
-        if math.isclose(cond_scale, 1.0):
-            uncond = None
-
         cond, uncond = calc_cond_uncond_batch(model_function, cond, uncond, x, timestep, max_total_area, cond_concat, model_options)
         if "sampler_cfg_function" in model_options:
             args = {"cond": cond, "uncond": uncond, "cond_scale": cond_scale, "timestep": timestep}
@@ -341,17 +337,6 @@ def ddim_scheduler(model, steps):
     ddim_timesteps = make_ddim_timesteps(ddim_discr_method="uniform", num_ddim_timesteps=steps, num_ddpm_timesteps=model.inner_model.inner_model.num_timesteps, verbose=False)
     for x in range(len(ddim_timesteps) - 1, -1, -1):
         ts = ddim_timesteps[x]
-        if ts > 999:
-            ts = 999
-        sigs.append(model.t_to_sigma(torch.tensor(ts)))
-    sigs += [0.0]
-    return torch.FloatTensor(sigs)
-
-def sgm_scheduler(model, steps):
-    sigs = []
-    timesteps = torch.linspace(model.inner_model.inner_model.num_timesteps - 1, 0, steps + 1)[:-1].type(torch.int)
-    for x in range(len(timesteps)):
-        ts = timesteps[x]
         if ts > 999:
             ts = 999
         sigs.append(model.t_to_sigma(torch.tensor(ts)))
@@ -536,10 +521,10 @@ def encode_adm(model, conds, batch_size, width, height, device, prompt_type):
 
 
 class KSampler:
-    SCHEDULERS = ["normal", "karras", "exponential", "sgm_uniform", "simple", "ddim_uniform"]
+    SCHEDULERS = ["normal", "karras", "exponential", "simple", "ddim_uniform"]
     SAMPLERS = ["euler", "euler_ancestral", "heun", "dpm_2", "dpm_2_ancestral",
                 "lms", "dpm_fast", "dpm_adaptive", "dpmpp_2s_ancestral", "dpmpp_sde", "dpmpp_sde_gpu",
-                "dpmpp_2m", "dpmpp_2m_sde", "dpmpp_2m_sde_gpu", "dpmpp_3m_sde", "dpmpp_3m_sde_gpu", "ddim", "uni_pc", "uni_pc_bh2"]
+                "dpmpp_2m", "dpmpp_2m_sde", "dpmpp_2m_sde_gpu", "ddim", "uni_pc", "uni_pc_bh2"]
 
     def __init__(self, model, steps, device, sampler=None, scheduler=None, denoise=None, model_options={}):
         self.model = model
@@ -581,8 +566,6 @@ class KSampler:
             sigmas = simple_scheduler(self.model_wrap, steps)
         elif self.scheduler == "ddim_uniform":
             sigmas = ddim_scheduler(self.model_wrap, steps)
-        elif self.scheduler == "sgm_uniform":
-            sigmas = sgm_scheduler(self.model_wrap, steps)
         else:
             print("error invalid scheduler", self.scheduler)
 
@@ -599,7 +582,7 @@ class KSampler:
             sigmas = self.calculate_sigmas(new_steps).to(self.device)
             self.sigmas = sigmas[-(steps + 1):]
 
-    def sample(self, noise, positive, negative, cfg, latent_image=None, start_step=None, last_step=None, force_full_denoise=False, denoise_mask=None, sigmas=None, callback=None, disable_pbar=False, seed=None):
+    def sample(self, sdxl_args, noise, positive, negative, cfg, latent_image=None, start_step=None, last_step=None, force_full_denoise=False, denoise_mask=None, sigmas=None, callback=None, disable_pbar=False, seed=None):
         if sigmas is None:
             sigmas = self.sigmas
         sigma_min = self.sigma_min
@@ -726,10 +709,10 @@ class KSampler:
             if latent_image is not None:
                 noise += latent_image
             if self.sampler == "dpm_fast":
-                samples = k_diffusion_sampling.sample_dpm_fast(self.model_k, noise, sigma_min, sigmas[0], total_steps, extra_args=extra_args, callback=k_callback, disable=disable_pbar)
+                samples = k_diffusion_sampling.sample_dpm_fast(sdxl_args, self.model_k, noise, sigma_min, sigmas[0], total_steps, extra_args=extra_args, callback=k_callback, disable=disable_pbar)
             elif self.sampler == "dpm_adaptive":
-                samples = k_diffusion_sampling.sample_dpm_adaptive(self.model_k, noise, sigma_min, sigmas[0], extra_args=extra_args, callback=k_callback, disable=disable_pbar)
+                samples = k_diffusion_sampling.sample_dpm_adaptive(sdxl_args, self.model_k, noise, sigma_min, sigmas[0], extra_args=extra_args, callback=k_callback, disable=disable_pbar)
             else:
-                samples = getattr(k_diffusion_sampling, "sample_{}".format(self.sampler))(self.model_k, noise, sigmas, extra_args=extra_args, callback=k_callback, disable=disable_pbar)
+                samples = getattr(k_diffusion_sampling, "sample_{}".format(self.sampler))(sdxl_args, self.model_k, noise, sigmas, extra_args=extra_args, callback=k_callback, disable=disable_pbar)
 
         return self.model.process_latent_out(samples.to(torch.float32))

@@ -1,7 +1,8 @@
+##starthere
 import psutil
 from enum import Enum
-from comfy.cli_args import args
 import torch
+import cuda_malloc
 
 class VRAMState(Enum):
     DISABLED = 0    #No vram present: no need to move models to vram
@@ -18,42 +19,20 @@ class CPUState(Enum):
 
 # Determine VRAM State
 vram_state = VRAMState.NORMAL_VRAM
-set_vram_to = VRAMState.NORMAL_VRAM
+set_vram_to = vram_state
 cpu_state = CPUState.GPU
 
 total_vram = 0
 
+#changing lowvram_available to True to see if it works
 lowvram_available = True
 xpu_available = False
-
 directml_enabled = False
-if args.directml is not None:
-    import torch_directml
-    directml_enabled = True
-    device_index = args.directml
-    if device_index < 0:
-        directml_device = torch_directml.device()
-    else:
-        directml_device = torch_directml.device(device_index)
-    print("Using directml with device:", torch_directml.device_name(device_index))
-    # torch_directml.disable_tiled_resources(True)
-    lowvram_available = False #TODO: need to find a way to get free memory in directml before this can be enabled by default.
+directml_device = None
+use_cpu = False
+gpu_only = False
 
-try:
-    import intel_extension_for_pytorch as ipex
-    if torch.xpu.is_available():
-        xpu_available = True
-except:
-    pass
-
-try:
-    if torch.backends.mps.is_available():
-        cpu_state = CPUState.MPS
-        import torch.mps
-except:
-    pass
-
-if args.cpu:
+if use_cpu:
     cpu_state = CPUState.CPU
 
 def get_torch_device():
@@ -101,10 +80,12 @@ def get_total_memory(dev=None, torch_total_too=False):
     else:
         return mem_total
 
+normalvram = False
+
 total_vram = get_total_memory(get_torch_device()) / (1024 * 1024)
 total_ram = psutil.virtual_memory().total / (1024 * 1024)
 print("Total VRAM {:0.0f} MB, total RAM {:0.0f} MB".format(total_vram, total_ram))
-if not args.normalvram and not args.cpu:
+if not normalvram and not use_cpu:
     if lowvram_available and total_vram <= 4096:
         print("Trying to enable lowvram mode because your GPU seems to have 4GB or less. If you don't want this use: --normalvram")
         set_vram_to = VRAMState.LOW_VRAM
@@ -119,7 +100,8 @@ except:
 
 XFORMERS_VERSION = ""
 XFORMERS_ENABLED_VAE = True
-if args.disable_xformers:
+disable_xformers = False
+if disable_xformers:
     XFORMERS_IS_AVAILABLE = False
 else:
     try:
@@ -145,10 +127,13 @@ def is_nvidia():
     if cpu_state == CPUState.GPU:
         if torch.version.cuda:
             return True
+use_pytorch_cross_attention = False
+ENABLE_PYTORCH_ATTENTION = use_pytorch_cross_attention
 
-ENABLE_PYTORCH_ATTENTION = args.use_pytorch_cross_attention
+use_split_cross_attention = False
+use_quad_cross_attention = False
 
-if ENABLE_PYTORCH_ATTENTION == False and XFORMERS_IS_AVAILABLE == False and args.use_split_cross_attention == False and args.use_quad_cross_attention == False:
+if ENABLE_PYTORCH_ATTENTION == False and XFORMERS_IS_AVAILABLE == False and use_split_cross_attention == False and use_quad_cross_attention == False:
     try:
         if is_nvidia():
             torch_version = torch.version.__version__
@@ -162,22 +147,30 @@ if ENABLE_PYTORCH_ATTENTION:
     torch.backends.cuda.enable_flash_sdp(True)
     torch.backends.cuda.enable_mem_efficient_sdp(True)
     XFORMERS_IS_AVAILABLE = False
+    
+novram = False
+lowvram = False
+highvram = False
+gpu_only = False
 
-if args.lowvram:
+if lowvram:
     set_vram_to = VRAMState.LOW_VRAM
     lowvram_available = True
-elif args.novram:
+elif novram:
     set_vram_to = VRAMState.NO_VRAM
-elif args.highvram or args.gpu_only:
+elif highvram or gpu_only:
     vram_state = VRAMState.HIGH_VRAM
 
 FORCE_FP32 = False
 FORCE_FP16 = False
-if args.force_fp32:
+force_fp32 = False #changing this to see if it helps performance
+force_fp16 = False
+
+if force_fp32:
     print("Forcing FP32, if this improves things please report it.")
     FORCE_FP32 = True
 
-if args.force_fp16:
+if force_fp16:
     print("Forcing FP16.")
     FORCE_FP16 = True
 
@@ -227,12 +220,11 @@ current_gpu_controlnets = []
 model_accelerated = False
 
 
-def unload_model():
-    global current_loaded_model
+def unload_model(model):
     global model_accelerated
     global current_gpu_controlnets
     global vram_state
-
+    current_loaded_model = model
     if current_loaded_model is not None:
         if model_accelerated:
             accelerate.hooks.remove_hook_from_submodules(current_loaded_model.model)
@@ -261,7 +253,7 @@ def load_model_gpu(model):
 
     if model is current_loaded_model:
         return
-    unload_model()
+    unload_model(model)
 
     torch_dev = model.load_device
     model.model_patches_to(torch_dev)
@@ -292,7 +284,7 @@ def load_model_gpu(model):
         real_model = model.patch_model(device_to=patch_model_to)
     except Exception as e:
         model.unpatch_model()
-        unload_model()
+        unload_model(model)
         raise e
 
     if patch_model_to is not None:
@@ -355,16 +347,15 @@ def unet_offload_device():
         return torch.device("cpu")
 
 def text_encoder_offload_device():
-    if args.gpu_only:
+    if gpu_only:
         return get_torch_device()
     else:
         return torch.device("cpu")
 
 def text_encoder_device():
-    if args.gpu_only:
+    if gpu_only:
         return get_torch_device()
     elif vram_state == VRAMState.HIGH_VRAM or vram_state == VRAMState.NORMAL_VRAM:
-        #NOTE: on a Ryzen 5 7600X with 4080 it's faster to shift to GPU
         if torch.get_num_threads() < 8: #leaving the text encoder on the CPU is faster than shifting it if the CPU is fast enough.
             return get_torch_device()
         else:
@@ -376,15 +367,18 @@ def vae_device():
     return get_torch_device()
 
 def vae_offload_device():
-    if args.gpu_only:
+    if gpu_only:
         return get_torch_device()
     else:
         return torch.device("cpu")
 
+fp16_vae = False
+bf16_vae = False
+
 def vae_dtype():
-    if args.fp16_vae:
+    if fp16_vae:
         return torch.float16
-    elif args.bf16_vae:
+    elif bf16_vae:
         return torch.bfloat16
     else:
         return torch.float32
@@ -394,7 +388,7 @@ def get_autocast_device(dev):
         return dev.type
     return "cuda"
 
-
+XFORMERS_IS_AVAILABLE = True
 def xformers_enabled():
     global xpu_available
     global directml_enabled
@@ -406,8 +400,8 @@ def xformers_enabled():
     if directml_enabled:
         return False
     return XFORMERS_IS_AVAILABLE
-
-
+XFORMERS_IS_AVAILABLE = True
+XFORMERS_ENABLED_VAE = True
 def xformers_enabled_vae():
     enabled = xformers_enabled()
     if not enabled:
@@ -535,11 +529,10 @@ def should_use_fp16(device=None, model_params=0):
         return False
 
     #FP16 is just broken on these cards
-    nvidia_16_series = ["1660", "1650", "1630", "T500", "T550", "T600", "MX550", "MX450", "CMP 30HX"]
+    nvidia_16_series = ["1660", "1650", "1630", "T500", "T550", "T600", "MX550", "MX450"]
     for x in nvidia_16_series:
         if x in props.name:
             return False
-
     return True
 
 def soft_empty_cache():

@@ -2,11 +2,18 @@ import torch
 from PIL import Image
 import struct
 import numpy as np
-from comfy.cli_args import args, LatentPreviewMethod
+# from comfy.cli_args import args, LatentPreviewMethod
 from comfy.taesd.taesd import TAESD
 import folder_paths
+import enum
 
 MAX_PREVIEW_RESOLUTION = 512
+
+class LatentPreviewMethod(enum.Enum):
+    NoPreviews = "none"
+    Auto = "auto"
+    Latent2RGB = "latent2rgb"
+    TAESD = "taesd"
 
 class LatentPreviewer:
     def decode_latent_to_preview(self, x0):
@@ -35,6 +42,7 @@ class TAESDPreviewerImpl(LatentPreviewer):
 
 class Latent2RGBPreviewer(LatentPreviewer):
     def __init__(self, latent_rgb_factors):
+        print(latent_rgb_factors)
         self.latent_rgb_factors = torch.tensor(latent_rgb_factors, device="cpu")
 
     def decode_latent_to_preview(self, x0):
@@ -50,7 +58,8 @@ class Latent2RGBPreviewer(LatentPreviewer):
 
 def get_previewer(device, latent_format):
     previewer = None
-    method = args.preview_method
+    # method = args.preview_method
+    method = LatentPreviewMethod.Auto
     if method != LatentPreviewMethod.NoPreviews:
         # TODO previewer methods
         taesd_decoder_path = folder_paths.get_full_path("vae_approx", latent_format.taesd_decoder_name)

@@ -1,4 +1,3 @@
-import { ComfyLogging } from "./logging.js";
 import { ComfyWidgets } from "./widgets.js";
 import { ComfyUI, $el } from "./ui.js";
 import { api } from "./api.js";
@@ -32,7 +31,6 @@ export class ComfyApp {
 
 	constructor() {
 		this.ui = new ComfyUI(this);
-		this.logging = new ComfyLogging(this);
 
 		/**
 		 * List of extensions that are registered with the app
@@ -1025,7 +1023,6 @@ export class ComfyApp {
 	 */
 	async #loadExtensions() {
 		const extensions = await api.getExtensions();
-		this.logging.addEntry("Comfy.App", "debug", { Extensions: extensions });
 		for (const ext of extensions) {
 			try {
 				await import(api.apiURL(ext));
@@ -1309,9 +1306,6 @@ export class ComfyApp {
 					(t) => `<li>${t}</li>`
 				).join("")}</ul>Nodes that have failed to load will show as red on the graph.`
 			);
-			this.logging.addEntry("Comfy.App", "warn", {
-				MissingNodes: missingNodeTypes,
-			});
 		}
 	}
 
@@ -1362,7 +1356,7 @@ export class ComfyApp {
 						if (parent.isVirtualNode) {
 							link = parent.getInputLink(link.origin_slot);
 							if (link) {
-								parent = parent.getInputNode(link.target_slot);
+								parent = parent.getInputNode(link.origin_slot);
 								if (parent) {
 									found = true;
 								}

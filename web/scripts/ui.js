@@ -234,7 +234,7 @@ class ComfySettingsDialog extends ComfyDialog {
 		localStorage[settingId] = JSON.stringify(value);
 	}
 
-	addSetting({id, name, type, defaultValue, onChange, attrs = {}, tooltip = "", options = undefined}) {
+	addSetting({id, name, type, defaultValue, onChange, attrs = {}, tooltip = "",}) {
 		if (!id) {
 			throw new Error("Settings must have an ID");
 		}
@@ -344,32 +344,6 @@ class ComfySettingsDialog extends ComfyDialog {
 											},
 										}),
 									]),
-								]),
-							]);
-							break;
-						case "combo":
-							element = $el("tr", [
-								labelCell,
-								$el("td", [
-									$el(
-										"select",
-										{
-											oninput: (e) => {
-												setter(e.target.value);
-											},
-										},
-										(typeof options === "function" ? options(value) : options || []).map((opt) => {
-											if (typeof opt === "string") {
-												opt = { text: opt };
-											}
-											const v = opt.value ?? opt.text;
-											return $el("option", {
-												value: v,
-												textContent: opt.text,
-												selected: value + "" === v + "",
-											});
-										})
-									),
 								]),
 							]);
 							break;
@@ -506,7 +480,7 @@ class ComfyList {
 
 	hide() {
 		this.element.style.display = "none";
-		this.button.textContent = "View " + this.#text;
+		this.button.textContent = "See " + this.#text;
 	}
 
 	toggle() {
