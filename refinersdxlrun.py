@@ -33,6 +33,9 @@ from comfy_extras import nodes_clip_sdxl
 from pytorch_lightning import seed_everything
 from ipywidgets import Image, Layout, VBox
 from io import BytesIO
+from PIL import Image as pilimage
+from PIL.PngImagePlugin import PngInfo
+import json
 
 def loadsdxlrefiner(sdxl_args):
     refiner = nodes.CheckpointLoaderSimple()
@@ -185,7 +188,13 @@ def runsdxlrefiner(sdxl_args, samples, model, refined_out):
         vbox = VBox([image_widget], layout=Layout(width="512px"))
         display(vbox)
 
-        im.save(os.path.join(output_folder, f'{sdxl_args.saveprefix}_{count+1:05d}_.png'))
+        if not sdxl_args.disable_metadata:
+            metadata = PngInfo()
+
+            if sdxl_args is not None:
+                for key, value in sdxl_args.__dict__.items():
+                    metadata.add_text(key, json.dumps(value))
+        im.save(os.path.join(output_folder, f'{sdxl_args.saveprefix}_{count+1:05d}_.png'), pnginfo=metadata, compress_level=4)
         count+=1
     try:
         model_management.unload_model(refinermodel)
