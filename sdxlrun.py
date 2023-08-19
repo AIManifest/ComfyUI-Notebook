@@ -9,7 +9,8 @@ import cuda_malloc
 from comfy.model_management import VRAMState
 from IPython.display import clear_output
 from pytorch_lightning import seed_everything
-from PIL import Image
+from PIL import Image as pil_image
+from PIL import ImageOps
 import numpy as np
 from einops import rearrange
 from comfy import model_management, sd
@@ -31,6 +32,11 @@ from io import BytesIO
 from PIL import Image as pilimage
 from PIL.PngImagePlugin import PngInfo
 import json
+from comfy_extras.nodes_canny import canny
+from custom_nodes.comfy_controlnet_preprocessors.nodes.util import common_annotator_call, img_np_to_tensor, skip_v1
+from custom_nodes.comfy_controlnet_preprocessors.v1 import midas, leres
+from custom_nodes.comfy_controlnet_preprocessors.v11 import zoe, normalbae
+import numpy as np
 
 
 def get_device_memory():
@@ -49,6 +55,48 @@ def get_device_memory():
     print(f"Free memory: {free_memory_gb:.2f} GB")
 
 get_device_memory()
+
+def apply_controlnet(positive, negative, control_net, image, strength, start_percent, end_percent):
+        if strength == 0:
+            return (positive, negative)
+
+        control_hint = image.movedim(-1,1)
+        cnets = {}
+
+        out = []
+        for conditioning in [positive, negative]:
+            c = []
+            for t in conditioning:
+                d = t[1].copy()
+
+                prev_cnet = d.get('control', None)
+                if prev_cnet in cnets:
+                    c_net = cnets[prev_cnet]
+                else:
+                    c_net = control_net.copy().set_cond_hint(control_hint, strength, (1.0 - start_percent, 1.0 - end_percent))
+                    c_net.set_previous_controlnet(prev_cnet)
+                    cnets[prev_cnet] = c_net
+
+                d['control'] = c_net
+                d['control_apply_to_uncond'] = False
+                n = [t[0], d]
+                c.append(n)
+            out.append(c)
+        return (out[0], out[1])
+
+def load_image(image_path):
+        # image_path = folder_paths.get_annotated_filepath(image)
+        i = pil_image.open(image_path)
+        i = ImageOps.exif_transpose(i)
+        image = i.convert("RGB")
+        image = np.array(image).astype(np.float32) / 255.0
+        image = torch.from_numpy(image)[None,]
+        if 'A' in i.getbands():
+            mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
+            mask = 1. - torch.from_numpy(mask)
+        else:
+            mask = torch.zeros((64,64), dtype=torch.float32, device="cpu")
+        return (image, mask)
 
 def load_lora(model, clip, lora_name, strength_model, strength_clip):
     loaded_lora = None
@@ -105,7 +153,7 @@ def loadsdxl(sdxl_args):
     print(f'model loaded in {end-start:.02f} seconds')
     return out
 
-def runsdxl(sdxl_args, out):
+def runsdxl(sdxl_args, out, control_net):
     model, clip, vae, _ = out
 
     if sdxl_args.stop_at_last_layer != None:
@@ -134,10 +182,19 @@ def runsdxl(sdxl_args, out):
     ncond, npooled = clip.encode_from_tokens(tokens, return_pooled=True)
     
     negative = [[ncond, {"pooled_output": npooled, "width": sdxl_args.width, "height": sdxl_args.height, "crop_w": sdxl_args.crop_w, "crop_h": sdxl_args.crop_h, "target_width": sdxl_args.target_width, "target_height": sdxl_args.target_height}]]
-    
+
     latentempty = nodes.EmptyLatentImage()
     latent = latentempty.generate(sdxl_args.imagewidth, sdxl_args.imageheight, sdxl_args.batch_size)
     latent = latent[0]
+    if sdxl_args.is_controlnet:
+        image, image_mask = load_image(sdxl_args.controlnet_image)
+        if "canny" in sdxl_args.controlnet_name:
+            output = canny(image.movedim(-1, 1), sdxl_args.controlnet_low_threshold, sdxl_args.controlnet_high_threshold)
+            img_out = output[1].repeat(1, 3, 1, 1).movedim(1, -1)
+        elif "depth" in sdxl_args.controlnet_name:
+            np_detected_map = common_annotator_call(zoe.ZoeDetector(), image)
+            img_out = img_np_to_tensor(np_detected_map)
+        positive, negative = apply_controlnet(positive, negative, control_net[0], img_out, sdxl_args.controlnet_strength, sdxl_args.controlnet_start_percent, sdxl_args.controlnet_end_percent)
 
     force_full_denoise = sdxl_args.force_full_denoise
     disable_noise = sdxl_args.disable_noise
