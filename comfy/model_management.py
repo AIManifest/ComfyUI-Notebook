@@ -3,6 +3,8 @@ import psutil
 from enum import Enum
 import torch
 import cuda_malloc
+import yaml
+
 
 class VRAMState(Enum):
     DISABLED = 0    #No vram present: no need to move models to vram
@@ -17,20 +19,44 @@ class CPUState(Enum):
     CPU = 1
     MPS = 2
 
+with open('comfy_notebook.yaml', 'r') as file:
+    data = yaml.safe_load(file)
+
+if data['vram_state'] == "DISABLED":
+    vram_state = VRAMState.DISABLED
+elif data['vram_state'] == "NO_VRAM":
+    vram_state = VRAMState.NO_VRAM
+elif data['vram_state'] == "LOW_VRAM":
+    vram_state = VRAMState.LOW_VRAM
+elif data['vram_state'] == "NORMAL_VRAM":
+    vram_state = VRAMState.NORMAL_VRAM
+elif data['vram_state'] == "HIGH_VRAM":
+    vram_state = VRAMState.HIGH_VRAM
+else:
+    vram_state = VRAMState.SHARED
+
+set_vram_state = vram_state
+lowvram_available = data['lowvram_available']
+xpu_available = data['xpu_available']
+directml_enabled = data['directml_enabled']
+directml_device = data['directml_device']
+use_cpu = data['use_cpu']
+gpu_only = data['gpu_only']
+normalvram = data['normalvram']
+use_pytorch_cross_attention = data['use_pytorch_cross_attention']
+use_split_cross_attention = data['use_split_cross_attention']
+use_quad_cross_attention = data['use_quad_cross_attention']
+novram = data['novram']
+lowvram = data['lowvram']
+highvram = data['highvram']
+force_fp32 = data['force_fp32']
+force_fp16 = data['force_fp16']
+
 # Determine VRAM State
-vram_state = VRAMState.NORMAL_VRAM
-set_vram_to = vram_state
+set_vram_to = set_vram_state
 cpu_state = CPUState.GPU
 
 total_vram = 0
-
-#changing lowvram_available to True to see if it works
-lowvram_available = True
-xpu_available = False
-directml_enabled = False
-directml_device = None
-use_cpu = False
-gpu_only = False
 
 if use_cpu:
     cpu_state = CPUState.CPU
@@ -80,8 +106,6 @@ def get_total_memory(dev=None, torch_total_too=False):
     else:
         return mem_total
 
-normalvram = False
-
 total_vram = get_total_memory(get_torch_device()) / (1024 * 1024)
 total_ram = psutil.virtual_memory().total / (1024 * 1024)
 print("Total VRAM {:0.0f} MB, total RAM {:0.0f} MB".format(total_vram, total_ram))
@@ -127,11 +151,8 @@ def is_nvidia():
     if cpu_state == CPUState.GPU:
         if torch.version.cuda:
             return True
-use_pytorch_cross_attention = False
+            
 ENABLE_PYTORCH_ATTENTION = use_pytorch_cross_attention
-
-use_split_cross_attention = False
-use_quad_cross_attention = False
 
 if ENABLE_PYTORCH_ATTENTION == False and XFORMERS_IS_AVAILABLE == False and use_split_cross_attention == False and use_quad_cross_attention == False:
     try:
@@ -147,11 +168,6 @@ if ENABLE_PYTORCH_ATTENTION:
     torch.backends.cuda.enable_flash_sdp(True)
     torch.backends.cuda.enable_mem_efficient_sdp(True)
     XFORMERS_IS_AVAILABLE = False
-    
-novram = False
-lowvram = False
-highvram = False
-gpu_only = False
 
 if lowvram:
     set_vram_to = VRAMState.LOW_VRAM
@@ -163,8 +179,6 @@ elif highvram or gpu_only:
 
 FORCE_FP32 = False
 FORCE_FP16 = False
-force_fp32 = False #changing this to see if it helps performance
-force_fp16 = False
 
 if force_fp32:
     print("Forcing FP32, if this improves things please report it.")
