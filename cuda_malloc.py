@@ -1,6 +1,12 @@
 import os
 import importlib.util
+import yaml
 # from comfy.cli_args import args
+
+with open('comfy_notebook.yaml', 'r') as file:
+    data = yaml.safe_load(file)
+cuda_malloc = data['cuda_malloc']
+disable_cuda_malloc = data['disable_cuda_malloc']
 
 #Can't use pytorch to get the GPU names because the cuda malloc has to be set before the first import.
 def get_gpu_names():
@@ -53,7 +59,7 @@ def cuda_malloc_supported():
                     return False
     return True
 
-cuda_malloc=True
+
 if not cuda_malloc:
     try:
         version = ""
@@ -70,7 +76,6 @@ if not cuda_malloc:
     except:
         pass
 
-disable_cuda_malloc=False
 if cuda_malloc and not disable_cuda_malloc:
     env_var = os.environ.get('PYTORCH_CUDA_ALLOC_CONF', None)
     if env_var is None:
