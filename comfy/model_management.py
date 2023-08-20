@@ -5,7 +5,6 @@ import torch
 import cuda_malloc
 import yaml
 
-
 class VRAMState(Enum):
     DISABLED = 0    #No vram present: no need to move models to vram
     NO_VRAM = 1     #Very low vram: enable all the options to save vram
@@ -51,6 +50,11 @@ lowvram = data['lowvram']
 highvram = data['highvram']
 force_fp32 = data['force_fp32']
 force_fp16 = data['force_fp16']
+disable_xformers = data['disable_xformers']
+fp16_vae = data['fp16_vae']
+bf16_vae = data['bf16_vae']
+XFORMERS_IS_AVAILABLE = data['XFORMERS_IS_AVAILABLE']
+XFORMERS_ENABLED_VAE = data['XFORMERS_ENABLED_VAE']
 
 # Determine VRAM State
 set_vram_to = set_vram_state
@@ -124,7 +128,6 @@ except:
 
 XFORMERS_VERSION = ""
 XFORMERS_ENABLED_VAE = True
-disable_xformers = False
 if disable_xformers:
     XFORMERS_IS_AVAILABLE = False
 else:
@@ -386,8 +389,6 @@ def vae_offload_device():
     else:
         return torch.device("cpu")
 
-fp16_vae = False
-bf16_vae = False
 
 def vae_dtype():
     if fp16_vae:
@@ -402,7 +403,6 @@ def get_autocast_device(dev):
         return dev.type
     return "cuda"
 
-XFORMERS_IS_AVAILABLE = True
 def xformers_enabled():
     global xpu_available
     global directml_enabled
@@ -414,8 +414,7 @@ def xformers_enabled():
     if directml_enabled:
         return False
     return XFORMERS_IS_AVAILABLE
-XFORMERS_IS_AVAILABLE = True
-XFORMERS_ENABLED_VAE = True
+
 def xformers_enabled_vae():
     enabled = xformers_enabled()
     if not enabled:
