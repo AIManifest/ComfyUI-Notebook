@@ -166,6 +166,10 @@ def runsdxlrefiner(sdxl_args, samples, model, refined_out):
     
     decoder = sd.VAE(device=torch.device("cpu"))
 
+    if sdxl_args.vae_path:
+        print(f"Loading {sdxl_args.vae_path}")
+        vae = comfy.sd.VAE(ckpt_path=sdxl_args.vae_path)
+
     vae_decode_method = sdxl_args.vae_decode_method
     if vae_decode_method == "normal":
         image = refinervae.decode(refinedsamples)
