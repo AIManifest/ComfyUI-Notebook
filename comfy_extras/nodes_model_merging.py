@@ -5,8 +5,13 @@ import comfy.model_base
 import folder_paths
 import json
 import os
+import yaml
+# from comfy.cli_args import args
 
-from comfy.cli_args import args
+with open('comfy_notebook.yaml', 'r') as file:
+    data = yaml.safe_load(file)
+
+disable_metadata = data["disable_metadata"]
 
 class ModelMergeSimple:
     @classmethod
@@ -128,7 +133,7 @@ class CheckpointSave:
         elif model.model.model_type == comfy.model_base.ModelType.V_PREDICTION:
             metadata["modelspec.predict_key"] = "v"
 
-        if not args.disable_metadata:
+        if not disable_metadata:
             metadata["prompt"] = prompt_info
             if extra_pnginfo is not None:
                 for x in extra_pnginfo:
