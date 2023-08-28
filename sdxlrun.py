@@ -1,4 +1,5 @@
 import os
+import cv2
 import xformers
 import xformers.ops
 from comfy import model_management
@@ -37,7 +38,8 @@ from custom_nodes.comfy_controlnet_preprocessors.nodes.util import common_annota
 from custom_nodes.comfy_controlnet_preprocessors.v1 import midas, leres
 from custom_nodes.comfy_controlnet_preprocessors.v11 import zoe, normalbae
 import numpy as np
-
+from iprogress import iprogress
+from natsort import natsorted
 
 def get_device_memory():
     total_memory = torch.cuda.get_device_properties(0).total_memory
@@ -153,6 +155,17 @@ def loadsdxl(sdxl_args):
     print(f'model loaded in {end-start:.02f} seconds')
     return out
 
+def create_video(image_folder, fps, video_name):
+    ext = [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]
+    images = [img for img in natsorted(os.listdir(image_folder)) if os.path.splitext(img)[1] in ext]
+    frame = cv2.imread(os.path.join(image_folder, images[0]))
+    height, width, layers = frame.shape
+    video = cv2.VideoWriter(os.path.join(image_folder, video_name), cv2.VideoWriter_fourcc(*'mp4v'), fps, (width,height))
+    for image in iprogress(images, desc="creating video", colour="sunset"):
+        video.write(cv2.imread(os.path.join(image_folder, image)))
+    cv2.destroyAllWindows()
+    video.release()
+
 def runsdxl(sdxl_args, out, control_net):
     model, clip, vae, _ = out
 
@@ -211,7 +224,7 @@ def runsdxl(sdxl_args, out, control_net):
     noise_mask = None
     if "noise_mask" in latent:
         noise_mask = latent["noise_mask"]
-    
+        
     preview_format = "PNG"
     if preview_format not in ["JPEG", "PNG"]:
         preview_format = "JPEG"
@@ -234,12 +247,24 @@ def runsdxl(sdxl_args, out, control_net):
     vbox = VBox([image_widget], layout=Layout(width="256px"))
     display(vbox)
 
+    output_folder = sdxl_args.output_folder
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder, exist_ok=True)
+    count = len(os.listdir(output_folder))
+    
+    preview_save_path = os.path.join(sdxl_args.output_folder, f'{sdxl_args.saveprefix}_{count+1:05d}')
+    if not os.path.exists(preview_save_path):
+        os.makedirs(preview_save_path, exist_ok=True)
+
     def callback(step, x0, x, total_steps):
         preview_bytes = None
+        idx = len(os.listdir(preview_save_path))
         if previewer:
             preview_bytes = previewer.decode_latent_to_preview_image(preview_format, x0)
             if use_preview:
                 new_bytes = preview_bytes[1]
+                preview_save = os.path.join(preview_save_path, f'preview_{idx+1:05d}.png')
+                new_bytes.save(preview_save)
                 display_bytes = BytesIO()
                 new_bytes.save(display_bytes, format='PNG')
                 image_data = display_bytes.getvalue()
@@ -297,12 +322,6 @@ def runsdxl(sdxl_args, out, control_net):
         image = vae.decode_tiled(samples)
     vaeimage = rearrange(image, 'b h w c -> b c h w')
 
-    output_folder = sdxl_args.output_folder
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder, exist_ok=True)
-        
-    count = len(os.listdir(output_folder))
-    
     for im in vaeimage:
         im = to_pil_image(im)
         new_im = im
@@ -321,10 +340,13 @@ def runsdxl(sdxl_args, out, control_net):
                     for key, value in sdxl_args.__dict__.items():
                         metadata.add_text(key, json.dumps(value))
             im.save(os.path.join(output_folder, f'{sdxl_args.saveprefix}_{count+1:05d}_.png'), pnginfo=metadata, compress_level=4)
+        if sdxl_args.create_video_preview:
+            create_video(preview_save_path, 5, f'{sdxl_args.saveprefix}_{count+1:05d}_.mp4')
         count+=1
     try:
         model_management.unload_model(refinermodel)
     except:
         model_management.unload_model(model)
     get_device_memory()
+
     return model, samples
