@@ -1,29 +1,111 @@
 import { api } from "./api.js"
+import "./domWidget.js";
 
-function getNumberDefaults(inputData, defaultStep) {
+function getNumberDefaults(inputData, defaultStep, precision, enable_rounding) {
 	let defaultVal = inputData[1]["default"];
-	let { min, max, step } = inputData[1];
+	let { min, max, step, round} = inputData[1];
 
 	if (defaultVal == undefined) defaultVal = 0;
 	if (min == undefined) min = 0;
 	if (max == undefined) max = 2048;
 	if (step == undefined) step = defaultStep;
+	// precision is the number of decimal places to show.
+	// by default, display the the smallest number of decimal places such that changes of size step are visible.
+	if (precision == undefined) {
+		precision = Math.max(-Math.floor(Math.log10(step)),0);
+	}
 
-	return { val: defaultVal, config: { min, max, step: 10.0 * step } };
+	if (enable_rounding && (round == undefined || round === true)) {
+		// by default, round the value to those decimal places shown.
+		round = Math.round(1000000*Math.pow(0.1,precision))/1000000;
+	}
+
+	return { val: defaultVal, config: { min, max, step: 10.0 * step, round, precision } };
 }
 
-export function addValueControlWidget(node, targetWidget, defaultValue = "randomize", values) {
-    const valueControl = node.addWidget("combo", "control_after_generate", defaultValue, function (v) { }, {
-        values: ["fixed", "increment", "decrement", "randomize"],
-        serialize: false, // Don't include this in prompt.
-    });
-    valueControl.afterQueued = () => {
+export function addValueControlWidget(node, targetWidget, defaultValue = "randomize", values, widgetName, inputData) {
+	let name = inputData[1]?.control_after_generate;
+	if(typeof name !== "string") {
+		name = widgetName;
+	}
+	const widgets = addValueControlWidgets(node, targetWidget, defaultValue, {
+		addFilterList: false,
+		controlAfterGenerateName: name
+	}, inputData);
+	return widgets[0];
+}
 
+export function addValueControlWidgets(node, targetWidget, defaultValue = "randomize", options, inputData) {
+	if (!defaultValue) defaultValue = "randomize";
+	if (!options) options = {};
+
+	const getName = (defaultName, optionName) => {
+		let name = defaultName;
+		if (options[optionName]) {
+			name = options[optionName];
+		} else if (typeof inputData?.[1]?.[defaultName] === "string") {
+			name = inputData?.[1]?.[defaultName];
+		} else if (inputData?.[1]?.control_prefix) {
+			name = inputData?.[1]?.control_prefix + " " + name
+		}
+		return name;
+	}
+
+	const widgets = [];
+	const valueControl = node.addWidget(
+		"combo",
+		getName("control_after_generate", "controlAfterGenerateName"),
+		defaultValue,
+		function () {},
+		{
+			values: ["fixed", "increment", "decrement", "randomize"],
+			serialize: false, // Don't include this in prompt.
+		}
+	);
+	widgets.push(valueControl);
+
+	const isCombo = targetWidget.type === "combo";
+	let comboFilter;
+	if (isCombo && options.addFilterList !== false) {
+		comboFilter = node.addWidget(
+			"string",
+			getName("control_filter_list", "controlFilterListName"),
+			"",
+			function () {},
+			{
+				serialize: false, // Don't include this in prompt.
+			}
+		);
+		widgets.push(comboFilter);
+	}
+
+	valueControl.afterQueued = () => {
 		var v = valueControl.value;
 
-		if (targetWidget.type == "combo" && v !== "fixed") {
-			let current_index = targetWidget.options.values.indexOf(targetWidget.value);
-			let current_length = targetWidget.options.values.length;
+		if (isCombo && v !== "fixed") {
+			let values = targetWidget.options.values;
+			const filter = comboFilter?.value;
+			if (filter) {
+				let check;
+				if (filter.startsWith("/") && filter.endsWith("/")) {
+					try {
+						const regex = new RegExp(filter.substring(1, filter.length - 1));
+						check = (item) => regex.test(item);
+					} catch (error) {
+						console.error("Error constructing RegExp filter for node " + node.id, filter, error);
+					}
+				}
+				if (!check) {
+					const lower = filter.toLocaleLowerCase();
+					check = (item) => item.toLocaleLowerCase().includes(lower);
+				}
+				values = values.filter(item => check(item));
+				if (!values.length && targetWidget.options.values.length) {
+					console.warn("Filter for node " + node.id + " has filtered out all items", filter);
+				}
+			}
+			let current_index = values.indexOf(targetWidget.value);
+			let current_length = values.length;
 
 			switch (v) {
 				case "increment":
@@ -40,11 +122,12 @@ export function addValueControlWidget(node, targetWidget, defaultValue = "random
 			current_index = Math.max(0, current_index);
 			current_index = Math.min(current_length - 1, current_index);
 			if (current_index >= 0) {
-				let value = targetWidget.options.values[current_index];
+				let value = values[current_index];
 				targetWidget.value = value;
 				targetWidget.callback(value);
 			}
-		} else { //number
+		} else {
+			//number
 			let min = targetWidget.options.min;
 			let max = targetWidget.options.max;
 			// limit to something that javascript can handle
@@ -67,185 +150,68 @@ export function addValueControlWidget(node, targetWidget, defaultValue = "random
 				default:
 					break;
 			}
-		/*check if values are over or under their respective
-		* ranges and set them to min or max.*/
-			if (targetWidget.value < min)
-				targetWidget.value = min;
+			/*check if values are over or under their respective
+			 * ranges and set them to min or max.*/
+			if (targetWidget.value < min) targetWidget.value = min;
 
 			if (targetWidget.value > max)
 				targetWidget.value = max;
+			targetWidget.callback(targetWidget.value);
 		}
-	}
-	return valueControl;	
+	};
+	return widgets;
 };
 
-function seedWidget(node, inputName, inputData, app) {
-	const seed = ComfyWidgets.INT(node, inputName, inputData, app);
-	const seedControl = addValueControlWidget(node, seed.widget, "randomize");
+function seedWidget(node, inputName, inputData, app, widgetName) {
+	const seed = createIntWidget(node, inputName, inputData, app, true);
+	const seedControl = addValueControlWidget(node, seed.widget, "randomize", undefined, widgetName, inputData);
 
 	seed.widget.linkedWidgets = [seedControl];
 	return seed;
 }
 
-const MultilineSymbol = Symbol();
-const MultilineResizeSymbol = Symbol();
+function createIntWidget(node, inputName, inputData, app, isSeedInput) {
+	const control = inputData[1]?.control_after_generate;
+	if (!isSeedInput && control) {
+		return seedWidget(node, inputName, inputData, app, typeof control === "string" ? control : undefined);
+	}
+
+	let widgetType = isSlider(inputData[1]["display"], app);
+	const { val, config } = getNumberDefaults(inputData, 1, 0, true);
+	Object.assign(config, { precision: 0 });
+	return {
+		widget: node.addWidget(
+			widgetType,
+			inputName,
+			val,
+			function (v) {
+				const s = this.options.step / 10;
+				this.value = Math.round(v / s) * s;
+			},
+			config
+		),
+	};
+}
 
 function addMultilineWidget(node, name, opts, app) {
-	const MIN_SIZE = 50;
+	const inputEl = document.createElement("textarea");
+	inputEl.className = "comfy-multiline-input";
+	inputEl.value = opts.defaultVal;
+	inputEl.placeholder = opts.placeholder || name;
 
-	function computeSize(size) {
-		if (node.widgets[0].last_y == null) return;
-
-		let y = node.widgets[0].last_y;
-		let freeSpace = size[1] - y;
-
-		// Compute the height of all non customtext widgets
-		let widgetHeight = 0;
-		const multi = [];
-		for (let i = 0; i < node.widgets.length; i++) {
-			const w = node.widgets[i];
-			if (w.type === "customtext") {
-				multi.push(w);
-			} else {
-				if (w.computeSize) {
-					widgetHeight += w.computeSize()[1] + 4;
-				} else {
-					widgetHeight += LiteGraph.NODE_WIDGET_HEIGHT + 4;
-				}
-			}
-		}
-
-		// See how large each text input can be
-		freeSpace -= widgetHeight;
-		freeSpace /= multi.length + (!!node.imgs?.length);
-
-		if (freeSpace < MIN_SIZE) {
-			// There isnt enough space for all the widgets, increase the size of the node
-			freeSpace = MIN_SIZE;
-			node.size[1] = y + widgetHeight + freeSpace * (multi.length + (!!node.imgs?.length));
-			node.graph.setDirtyCanvas(true);
-		}
-
-		// Position each of the widgets
-		for (const w of node.widgets) {
-			w.y = y;
-			if (w.type === "customtext") {
-				y += freeSpace;
-				w.computedHeight = freeSpace - multi.length*4;
-			} else if (w.computeSize) {
-				y += w.computeSize()[1] + 4;
-			} else {
-				y += LiteGraph.NODE_WIDGET_HEIGHT + 4;
-			}
-		}
-
-		node.inputHeight = freeSpace;
-	}
-
-	const widget = {
-		type: "customtext",
-		name,
-		get value() {
-			return this.inputEl.value;
+	const widget = node.addDOMWidget(name, "customtext", inputEl, {
+		getValue() {
+			return inputEl.value;
 		},
-		set value(x) {
-			this.inputEl.value = x;
+		setValue(v) {
+			inputEl.value = v;
 		},
-		draw: function (ctx, _, widgetWidth, y, widgetHeight) {
-			if (!this.parent.inputHeight) {
-				// If we are initially offscreen when created we wont have received a resize event
-				// Calculate it here instead
-				computeSize(node.size);
-			}
-			const visible = app.canvas.ds.scale > 0.5 && this.type === "customtext";
-			const margin = 10;
-			const elRect = ctx.canvas.getBoundingClientRect();
-			const transform = new DOMMatrix()
-				.scaleSelf(elRect.width / ctx.canvas.width, elRect.height / ctx.canvas.height)
-				.multiplySelf(ctx.getTransform())
-				.translateSelf(margin, margin + y);
-
-			const scale = new DOMMatrix().scaleSelf(transform.a, transform.d)
-			Object.assign(this.inputEl.style, {
-				transformOrigin: "0 0",
-				transform: scale,
-				left: `${transform.a + transform.e}px`,
-				top: `${transform.d + transform.f}px`,
-				width: `${widgetWidth - (margin * 2)}px`,
-				height: `${this.parent.inputHeight - (margin * 2)}px`,
-				position: "absolute",
-				background: (!node.color)?'':node.color,
-				color: (!node.color)?'':'white',
-				zIndex: app.graph._nodes.indexOf(node),
-			});
-			this.inputEl.hidden = !visible;
-		},
-	};
-	widget.inputEl = document.createElement("textarea");
-	widget.inputEl.className = "comfy-multiline-input";
-	widget.inputEl.value = opts.defaultVal;
-	widget.inputEl.placeholder = opts.placeholder || "";
-	document.addEventListener("mousedown", function (event) {
-		if (!widget.inputEl.contains(event.target)) {
-			widget.inputEl.blur();
-		}
 	});
-	widget.parent = node;
-	document.body.appendChild(widget.inputEl);
+	widget.inputEl = inputEl;
 
-	node.addCustomWidget(widget);
-
-	app.canvas.onDrawBackground = function () {
-		// Draw node isnt fired once the node is off the screen
-		// if it goes off screen quickly, the input may not be removed
-		// this shifts it off screen so it can be moved back if the node is visible.
-		for (let n in app.graph._nodes) {
-			n = graph._nodes[n];
-			for (let w in n.widgets) {
-				let wid = n.widgets[w];
-				if (Object.hasOwn(wid, "inputEl")) {
-					wid.inputEl.style.left = -8000 + "px";
-					wid.inputEl.style.position = "absolute";
-				}
-			}
-		}
-	};
-
-	node.onRemoved = function () {
-		// When removing this node we need to remove the input from the DOM
-		for (let y in this.widgets) {
-			if (this.widgets[y].inputEl) {
-				this.widgets[y].inputEl.remove();
-			}
-		}
-	};
-
-	widget.onRemove = () => {
-		widget.inputEl?.remove();
-
-		// Restore original size handler if we are the last
-		if (!--node[MultilineSymbol]) {
-			node.onResize = node[MultilineResizeSymbol];
-			delete node[MultilineSymbol];
-			delete node[MultilineResizeSymbol];
-		}
-	};
-
-	if (node[MultilineSymbol]) {
-		node[MultilineSymbol]++;
-	} else {
-		node[MultilineSymbol] = 1;
-		const onResize = (node[MultilineResizeSymbol] = node.onResize);
-
-		node.onResize = function (size) {
-			computeSize(size);
-
-			// Call original resizer handler
-			if (onResize) {
-				onResize.apply(this, arguments);
-			}
-		};
-	}
+	inputEl.addEventListener("input", () => {
+		widget.callback?.(widget.value);
+	});
 
 	return { minWidth: 400, minHeight: 200, widget };
 }
@@ -263,36 +229,40 @@ export const ComfyWidgets = {
 	"INT:noise_seed": seedWidget,
 	FLOAT(node, inputName, inputData, app) {
 		let widgetType = isSlider(inputData[1]["display"], app);
-		const { val, config } = getNumberDefaults(inputData, 0.5);
-		return { widget: node.addWidget(widgetType, inputName, val, () => {}, config) };
+		let precision = app.ui.settings.getSettingValue("Comfy.FloatRoundingPrecision");
+		let disable_rounding = app.ui.settings.getSettingValue("Comfy.DisableFloatRounding")
+		if (precision == 0) precision = undefined;
+		const { val, config } = getNumberDefaults(inputData, 0.5, precision, !disable_rounding);
+		return { widget: node.addWidget(widgetType, inputName, val, 
+			function (v) {
+				if (config.round) {
+					this.value = Math.round(v/config.round)*config.round;
+				} else {
+					this.value = v;
+				}
+			}, config) };
 	},
 	INT(node, inputName, inputData, app) {
-		console.log(app);
-		let widgetType = isSlider(inputData[1]["display"], app);
-		const { val, config } = getNumberDefaults(inputData, 1);
-		Object.assign(config, { precision: 0 });
-		return {
-			widget: node.addWidget(
-				widgetType,
-				inputName,
-				val,
-				function (v) {
-					const s = this.options.step / 10;
-					this.value = Math.round(v / s) * s;
-				},
-				config
-			),
-		};
+		return createIntWidget(node, inputName, inputData, app);
 	},
 	BOOLEAN(node, inputName, inputData) {
-		let defaultVal = inputData[1]["default"];
+		let defaultVal = false;
+		let options = {};
+		if (inputData[1]) {
+			if (inputData[1].default)
+				defaultVal = inputData[1].default;
+			if (inputData[1].label_on)
+				options["on"] = inputData[1].label_on;
+			if (inputData[1].label_off)
+				options["off"] = inputData[1].label_off;
+		}
 		return {
 			widget: node.addWidget(
 				"toggle",
 				inputName,
 				defaultVal,
 				() => {},
-				{"on": inputData[1].label_on, "off": inputData[1].label_off}
+				options,
 				)
 		};
 	},
@@ -300,11 +270,17 @@ export const ComfyWidgets = {
 		const defaultVal = inputData[1].default || "";
 		const multiline = !!inputData[1].multiline;
 
+		let res;
 		if (multiline) {
-			return addMultilineWidget(node, inputName, { defaultVal, ...inputData[1] }, app);
+			res = addMultilineWidget(node, inputName, { defaultVal, ...inputData[1] }, app);
 		} else {
-			return { widget: node.addWidget("text", inputName, defaultVal, () => {}, {}) };
+			res = { widget: node.addWidget("text", inputName, defaultVal, () => {}, {}) };
 		}
+
+		if(inputData[1].dynamicPrompts != undefined)
+			res.widget.dynamicPrompts = inputData[1].dynamicPrompts;
+
+		return res;
 	},
 	COMBO(node, inputName, inputData) {
 		const type = inputData[0];
@@ -312,10 +288,14 @@ export const ComfyWidgets = {
 		if (inputData[1] && inputData[1].default) {
 			defaultValue = inputData[1].default;
 		}
-		return { widget: node.addWidget("combo", inputName, defaultValue, () => {}, { values: type }) };
+		const res = { widget: node.addWidget("combo", inputName, defaultValue, () => {}, { values: type }) };
+		if (inputData[1]?.control_after_generate) {
+			res.widget.linkedWidgets = addValueControlWidgets(node, res.widget, undefined, undefined, inputData);
+		}
+		return res;
 	},
 	IMAGEUPLOAD(node, inputName, inputData, app) {
-		const imageWidget = node.widgets.find((w) => w.name === "image");
+		const imageWidget = node.widgets.find((w) => w.name === (inputData[1]?.widget ?? "image"));
 		let uploadWidget;
 
 		function showImage(name) {
@@ -330,7 +310,7 @@ export const ComfyWidgets = {
 				subfolder = name.substring(0, folder_separator);
 				name = name.substring(folder_separator + 1);
 			}
-			img.src = api.apiURL(`/view?filename=${name}&type=input&subfolder=${subfolder}${app.getPreviewFormatParam()}`);
+			img.src = api.apiURL(`/view?filename=${encodeURIComponent(name)}&type=input&subfolder=${subfolder}${app.getPreviewFormatParam()}${app.getRandParam()}`);
 			node.setSizeForImage?.();
 		}
 
@@ -382,11 +362,12 @@ export const ComfyWidgets = {
 			}
 		});
 
-		async function uploadFile(file, updateNode) {
+		async function uploadFile(file, updateNode, pasted = false) {
 			try {
 				// Wrap file in formdata so it includes filename
 				const body = new FormData();
 				body.append("image", file);
+				if (pasted) body.append("subfolder", "pasted");
 				const resp = await api.fetchApi("/upload/image", {
 					method: "POST",
 					body,
@@ -394,15 +375,17 @@ export const ComfyWidgets = {
 
 				if (resp.status === 200) {
 					const data = await resp.json();
-					// Add the file as an option and update the widget value
-					if (!imageWidget.options.values.includes(data.name)) {
-						imageWidget.options.values.push(data.name);
+					// Add the file to the dropdown list and update the widget value
+					let path = data.name;
+					if (data.subfolder) path = data.subfolder + "/" + path;
+
+					if (!imageWidget.options.values.includes(path)) {
+						imageWidget.options.values.push(path);
 					}
 
 					if (updateNode) {
-						showImage(data.name);
-
-						imageWidget.value = data.name;
+						showImage(path);
+						imageWidget.value = path;
 					}
 				} else {
 					alert(resp.status + " - " + resp.statusText);
@@ -426,15 +409,16 @@ export const ComfyWidgets = {
 		document.body.append(fileInput);
 
 		// Create the button widget for selecting the files
-		uploadWidget = node.addWidget("button", "choose file to upload", "image", () => {
+		uploadWidget = node.addWidget("button", inputName, "image", () => {
 			fileInput.click();
 		});
+		uploadWidget.label = "choose file to upload";
 		uploadWidget.serialize = false;
 
 		// Add handler to check if an image is being dragged over our node
 		node.onDragOver = function (e) {
 			if (e.dataTransfer && e.dataTransfer.items) {
-				const image = [...e.dataTransfer.items].find((f) => f.kind === "file" && f.type.startsWith("image/"));
+				const image = [...e.dataTransfer.items].find((f) => f.kind === "file");
 				return !!image;
 			}
 
@@ -454,6 +438,16 @@ export const ComfyWidgets = {
 
 			return handled;
 		};
+
+		node.pasteFile = function(file) {
+			if (file.type.startsWith("image/")) {
+				const is_pasted = (file.name === "image.png") &&
+								  (file.lastModified - Date.now() < 2000);
+				uploadFile(file, true, is_pasted);
+				return true;
+			}
+			return false;
+		}
 
 		return { widget: uploadWidget };
 	},
