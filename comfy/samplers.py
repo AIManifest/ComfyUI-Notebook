@@ -530,12 +530,12 @@ KSAMPLER_NAMES = ["euler", "euler_ancestral", "heun", "heunpp2","dpm_2", "dpm_2_
                   "dpmpp_2m", "dpmpp_2m_sde", "dpmpp_2m_sde_gpu", "dpmpp_3m_sde", "dpmpp_3m_sde_gpu", "ddpm", "lcm"]
 
 class KSAMPLER(Sampler):
-    def __init__(self, sampler_function, extra_options={}, inpaint_options={}):
+    def __init__(self, args, sampler_function, extra_options={}, inpaint_options={}):
         self.sampler_function = sampler_function
         self.extra_options = extra_options
         self.inpaint_options = inpaint_options
 
-    def sample(self, model_wrap, sigmas, extra_args, callback, noise, latent_image=None, denoise_mask=None, disable_pbar=False):
+    def sample(self, args, model_wrap, sigmas, extra_args, callback, noise, latent_image=None, denoise_mask=None, disable_pbar=False):
         extra_args["denoise_mask"] = denoise_mask
         model_k = KSamplerX0Inpaint(model_wrap)
         model_k.latent_image = latent_image
@@ -558,36 +558,36 @@ class KSAMPLER(Sampler):
         if latent_image is not None:
             noise += latent_image
 
-        samples = self.sampler_function(model_k, noise, sigmas, extra_args=extra_args, callback=k_callback, disable=disable_pbar, **self.extra_options)
+        samples = self.sampler_function(args, model_k, noise, sigmas, extra_args=extra_args, callback=k_callback, disable=disable_pbar, **self.extra_options)
         return samples
 
 
-def ksampler(sampler_name, extra_options={}, inpaint_options={}):
+def ksampler(args, sampler_name, extra_options={}, inpaint_options={}):
     if sampler_name == "dpm_fast":
-        def dpm_fast_function(model, noise, sigmas, extra_args, callback, disable):
+        def dpm_fast_function(args, model, noise, sigmas, extra_args, callback, disable):
             sigma_min = sigmas[-1]
             if sigma_min == 0:
                 sigma_min = sigmas[-2]
             total_steps = len(sigmas) - 1
-            return k_diffusion_sampling.sample_dpm_fast(model, noise, sigma_min, sigmas[0], total_steps, extra_args=extra_args, callback=callback, disable=disable)
+            return k_diffusion_sampling.sample_dpm_fast(args, model, noise, sigma_min, sigmas[0], total_steps, extra_args=extra_args, callback=callback, disable=disable)
         sampler_function = dpm_fast_function
     elif sampler_name == "dpm_adaptive":
-        def dpm_adaptive_function(model, noise, sigmas, extra_args, callback, disable):
+        def dpm_adaptive_function(args, model, noise, sigmas, extra_args, callback, disable):
             sigma_min = sigmas[-1]
             if sigma_min == 0:
                 sigma_min = sigmas[-2]
-            return k_diffusion_sampling.sample_dpm_adaptive(model, noise, sigma_min, sigmas[0], extra_args=extra_args, callback=callback, disable=disable)
+            return k_diffusion_sampling.sample_dpm_adaptive(args, model, noise, sigma_min, sigmas[0], extra_args=extra_args, callback=callback, disable=disable)
         sampler_function = dpm_adaptive_function
     else:
         sampler_function = getattr(k_diffusion_sampling, "sample_{}".format(sampler_name))
 
-    return KSAMPLER(sampler_function, extra_options, inpaint_options)
+    return KSAMPLER(args, sampler_function, extra_options, inpaint_options)
 
 def wrap_model(model):
     model_denoise = CFGNoisePredictor(model)
     return model_denoise
 
-def sample(model, noise, positive, negative, cfg, device, sampler, sigmas, model_options={}, latent_image=None, denoise_mask=None, callback=None, disable_pbar=False, seed=None):
+def sample(args, model, noise, positive, negative, cfg, device, sampler, sigmas, model_options={}, latent_image=None, denoise_mask=None, callback=None, disable_pbar=False, seed=None):
     positive = positive[:]
     negative = negative[:]
 
@@ -619,7 +619,7 @@ def sample(model, noise, positive, negative, cfg, device, sampler, sigmas, model
 
     extra_args = {"cond":positive, "uncond":negative, "cond_scale": cfg, "model_options": model_options, "seed":seed}
 
-    samples = sampler.sample(model_wrap, sigmas, extra_args, callback, noise, latent_image, denoise_mask, disable_pbar)
+    samples = sampler.sample(args, model_wrap, sigmas, extra_args, callback, noise, latent_image, denoise_mask, disable_pbar)
     return model.process_latent_out(samples.to(torch.float32))
 
 SCHEDULER_NAMES = ["normal", "karras", "exponential", "sgm_uniform", "simple", "ddim_uniform"]
@@ -642,22 +642,22 @@ def calculate_sigmas_scheduler(model, scheduler_name, steps):
         print("error invalid scheduler", self.scheduler)
     return sigmas
 
-def sampler_object(name):
+def sampler_object(args, name):
     if name == "uni_pc":
         sampler = UNIPC()
     elif name == "uni_pc_bh2":
         sampler = UNIPCBH2()
     elif name == "ddim":
-        sampler = ksampler("euler", inpaint_options={"random": True})
+        sampler = ksampler(args, "euler", inpaint_options={"random": True})
     else:
-        sampler = ksampler(name)
+        sampler = ksampler(args, name)
     return sampler
 
 class KSampler:
     SCHEDULERS = SCHEDULER_NAMES
     SAMPLERS = SAMPLER_NAMES
 
-    def __init__(self, model, steps, device, sampler=None, scheduler=None, denoise=None, model_options={}):
+    def __init__(self, args, model, steps, device, sampler=None, scheduler=None, denoise=None, model_options={}):
         self.model = model
         self.device = device
         if scheduler not in self.SCHEDULERS:
@@ -693,7 +693,7 @@ class KSampler:
             sigmas = self.calculate_sigmas(new_steps).to(self.device)
             self.sigmas = sigmas[-(steps + 1):]
 
-    def sample(self, noise, positive, negative, cfg, latent_image=None, start_step=None, last_step=None, force_full_denoise=False, denoise_mask=None, sigmas=None, callback=None, disable_pbar=False, seed=None):
+    def sample(self, args, noise, positive, negative, cfg, latent_image=None, start_step=None, last_step=None, force_full_denoise=False, denoise_mask=None, sigmas=None, callback=None, disable_pbar=False, seed=None):
         if sigmas is None:
             sigmas = self.sigmas
 
@@ -711,6 +711,6 @@ class KSampler:
                 else:
                     return torch.zeros_like(noise)
 
-        sampler = sampler_object(self.sampler)
+        sampler = sampler_object(args, self.sampler)
 
-        return sample(self.model, noise, positive, negative, cfg, self.device, sampler, sigmas, self.model_options, latent_image=latent_image, denoise_mask=denoise_mask, callback=callback, disable_pbar=disable_pbar, seed=seed)
+        return sample(args, self.model, noise, positive, negative, cfg, self.device, sampler, sigmas, self.model_options, latent_image=latent_image, denoise_mask=denoise_mask, callback=callback, disable_pbar=disable_pbar, seed=seed)
