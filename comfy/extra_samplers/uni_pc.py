@@ -352,6 +352,7 @@ def model_wrapper(
 class UniPC:
     def __init__(
         self,
+        args,
         model_fn,
         noise_schedule,
         predict_x0=True,
@@ -709,7 +710,7 @@ class UniPC:
         return x_t, model_t
 
 
-    def sample(self, x, timesteps, t_start=None, t_end=None, order=3, skip_type='time_uniform',
+    def sample(self, args, x, timesteps, t_start=None, t_end=None, order=3, skip_type='time_uniform',
         method='singlestep', lower_order_final=True, denoise_to_zero=False, solver_type='dpm_solver',
         atol=0.0078, rtol=0.05, corrector=False, callback=None, disable_pbar=False
     ):
@@ -858,7 +859,7 @@ def predict_eps_sigma(model, input, sigma_in, **kwargs):
     return  (input - model(input, sigma_in, **kwargs)) / sigma
 
 
-def sample_unipc(model, noise, image, sigmas, max_denoise, extra_args=None, callback=None, disable=False, noise_mask=None, variant='bh1'):
+def sample_unipc(args, model, noise, image, sigmas, max_denoise, extra_args=None, callback=None, disable=False, noise_mask=None, variant='bh1'):
         timesteps = sigmas.clone()
         if sigmas[-1] == 0:
             timesteps = sigmas[:]
@@ -888,7 +889,7 @@ def sample_unipc(model, noise, image, sigmas, max_denoise, extra_args=None, call
         )
 
         order = min(3, len(timesteps) - 2)
-        uni_pc = UniPC(model_fn, ns, predict_x0=True, thresholding=False, noise_mask=noise_mask, masked_image=image, noise=noise, variant=variant)
-        x = uni_pc.sample(img, timesteps=timesteps, skip_type="time_uniform", method="multistep", order=order, lower_order_final=True, callback=callback, disable_pbar=disable)
+        uni_pc = UniPC(args, model_fn, ns, predict_x0=True, thresholding=False, noise_mask=noise_mask, masked_image=image, noise=noise, variant=variant)
+        x = uni_pc.sample(args, img, timesteps=timesteps, skip_type="time_uniform", method="multistep", order=order, lower_order_final=True, callback=callback, disable_pbar=disable)
         x /= ns.marginal_alpha(timesteps[-1])
         return x
