@@ -133,7 +133,175 @@ def loadsdxl(sdxl_args):
             output_clip=True,
             )
     
-    model, clip, vae, clipvision = out
+    model, clip, vae = out
+    
+    clear_output(wait=True)
+    
+    get_device_memory()
+    
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
+    
+    if sdxl_args.lora_name != None:
+        lora = load_lora(model, clip, sdxl_args.lora_name, sdxl_args.strength_model, sdxl_args.strength_clip)
+        old_model, old_clip, old_out = model, clip, out
+        model, clip = lora
+        del old_model
+        del old_clip
+        del old_out
+        out = (model, clip, vae, clipvision)
+    end = time.time()
+    print(f'model loaded in {end-start:.02f} seconds')
+    return out
+
+def create_video(image_folder, fps, video_name):
+    ext = [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]
+    images = [img for img in natsorted(os.listdir(image_folder)) if os.path.splitext(img)[1] in ext]
+    frame = cv2.imread(os.path.join(image_folder, images[0]))
+    height, width, layers = frame.shape
+    video = cv2.VideoWriter(os.path.join(image_folder, video_name), cv2.VideoWriter_fourcc(*'mp4v'), fps, (width,height))
+    for image in iprogress(images, desc="creating video", colour="sunset"):
+        video.write(cv2.imread(os.path.join(image_folder, image)))
+    cv2.destroyAllWindows()
+    video.release()
+
+import os
+import cv2
+import xformers
+import xformers.ops
+from comfy import model_management
+import folder_paths
+from enum import Enum
+import torch
+import cuda_malloc
+from comfy.model_management import VRAMState
+from IPython.display import clear_output
+from pytorch_lightning import seed_everything
+from PIL import Image as pil_image
+from PIL import ImageOps
+import numpy as np
+from einops import rearrange
+from comfy import model_management, sd
+from torchvision.transforms.functional import to_pil_image
+from comfy import latent_formats
+from comfy.latent_formats import SDXL
+from IPython.display import display, clear_output
+import io
+import nodes
+import comfy
+import importlib
+import latent_preview
+import gc
+import random
+from comfy_extras import nodes_clip_sdxl
+import time
+from ipywidgets import Image, Layout, VBox
+from io import BytesIO
+from PIL import Image as pilimage
+from PIL.PngImagePlugin import PngInfo
+import json
+from comfy_extras.nodes_canny import canny
+from custom_nodes.comfy_controlnet_preprocessors.nodes.util import common_annotator_call, img_np_to_tensor, skip_v1
+from custom_nodes.comfy_controlnet_preprocessors.v1 import midas, leres
+from custom_nodes.comfy_controlnet_preprocessors.v11 import zoe, normalbae
+import numpy as np
+from iprogress import iprogress
+from natsort import natsorted
+
+def get_device_memory():
+    total_memory = torch.cuda.get_device_properties(0).total_memory
+    total_memory_gb = total_memory / (1024 ** 3)
+    reserved_memory = torch.cuda.memory_reserved(0)
+    reserved_memory_gb = reserved_memory / (1024 ** 3)
+    allocated_memory = torch.cuda.memory_allocated(0)
+    allocated_memory_gb = allocated_memory / (1024 ** 3)
+    free_memory = total_memory - allocated_memory
+    free_memory_gb = free_memory / (1024 ** 3)
+
+    print(f"Total memory: {total_memory_gb:.2f} GB")
+    print(f"Reserved memory: {reserved_memory_gb:.2f} GB")
+    print(f"Allocated memory: {allocated_memory_gb:.2f} GB")
+    print(f"Free memory: {free_memory_gb:.2f} GB")
+
+get_device_memory()
+
+def apply_controlnet(positive, negative, control_net, image, strength, start_percent, end_percent):
+        if strength == 0:
+            return (positive, negative)
+
+        control_hint = image.movedim(-1,1)
+        cnets = {}
+
+        out = []
+        for conditioning in [positive, negative]:
+            c = []
+            for t in conditioning:
+                d = t[1].copy()
+
+                prev_cnet = d.get('control', None)
+                if prev_cnet in cnets:
+                    c_net = cnets[prev_cnet]
+                else:
+                    c_net = control_net.copy().set_cond_hint(control_hint, strength, (1.0 - start_percent, 1.0 - end_percent))
+                    c_net.set_previous_controlnet(prev_cnet)
+                    cnets[prev_cnet] = c_net
+
+                d['control'] = c_net
+                d['control_apply_to_uncond'] = False
+                n = [t[0], d]
+                c.append(n)
+            out.append(c)
+        return (out[0], out[1])
+
+def load_image(image_path):
+        # image_path = folder_paths.get_annotated_filepath(image)
+        i = pil_image.open(image_path)
+        i = ImageOps.exif_transpose(i)
+        image = i.convert("RGB")
+        image = np.array(image).astype(np.float32) / 255.0
+        image = torch.from_numpy(image)[None,]
+        if 'A' in i.getbands():
+            mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
+            mask = 1. - torch.from_numpy(mask)
+        else:
+            mask = torch.zeros((64,64), dtype=torch.float32, device="cpu")
+        return (image, mask)
+
+def load_lora(model, clip, lora_name, strength_model, strength_clip):
+    loaded_lora = None
+    if strength_model == 0 and strength_clip == 0:
+        return (model, clip)
+
+    lora_path = folder_paths.get_full_path("loras", lora_name)
+    lora = None
+    if loaded_lora is not None:
+            if loaded_lora[0] == lora_path:
+                lora = loaded_lora[1]
+            else:
+                temp = loaded_lora
+                loaded_lora = None
+                del temp
+
+    if lora is None:
+        lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
+        loaded_lora = (lora_path, lora)
+
+    model_lora, clip_lora = comfy.sd.load_lora_for_models(model, clip, lora, strength_model, strength_clip)
+    del model
+    del clip
+    return (model_lora, clip_lora)
+
+def loadsdxl(sdxl_args):
+    start = time.time()
+    loader = nodes.CheckpointLoaderSimple()
+    out = loader.load_checkpoint(
+            sdxl_args.ckpt_name,
+            output_vae=True,
+            output_clip=True,
+            )
+    
+    model, clip, vae = out
     
     clear_output(wait=True)
     
@@ -167,7 +335,7 @@ def create_video(image_folder, fps, video_name):
     video.release()
 
 def runsdxl(sdxl_args, out, control_net):
-    model, clip, vae, _ = out
+    model, clip, vae = out
 
     if sdxl_args.stop_at_last_layer != None:
         clip = clip.clone()
@@ -294,26 +462,19 @@ def runsdxl(sdxl_args, out, control_net):
     gc.collect()
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
-    get_device_memory()
-    
-    model_management.unload_model(model)
-    
+    get_device_memory()    
     
     gc.collect()
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
     get_device_memory()
     
-    try:
-        model_management.unload_model(model)
-    except:
-        model_management.unload_model(refinermodel)
-    
     samples=samples.cpu()
 
     if sdxl_args.vae_path:
         print(f"Loading {sdxl_args.vae_path}")
-        vae = comfy.sd.VAE(ckpt_path=sdxl_args.vae_path)
+        sd = comfy.utils.load_torch_file(sdxl_args.vae_path)
+        vae = comfy.sd.VAE(sd=sd)
     
     vae_decode_method = sdxl_args.vae_decode_method
     if vae_decode_method == "normal":
@@ -343,10 +504,6 @@ def runsdxl(sdxl_args, out, control_net):
         if sdxl_args.create_video_preview:
             create_video(preview_save_path, 5, f'{sdxl_args.saveprefix}_{count+1:05d}_.mp4')
         count+=1
-    try:
-        model_management.unload_model(refinermodel)
-    except:
-        model_management.unload_model(model)
     get_device_memory()
 
     return model, samples
