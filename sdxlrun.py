@@ -318,7 +318,7 @@ def loadsdxl(sdxl_args):
         del old_model
         del old_clip
         del old_out
-        out = (model, clip, vae, clipvision)
+        out = (model, clip, vae)
     end = time.time()
     print(f'model loaded in {end-start:.02f} seconds')
     return out
