@@ -5,6 +5,7 @@ import xformers.ops
 from comfy import model_management
 import folder_paths
 from enum import Enum
+from tqdm.auto import tqdm
 import torch
 import cuda_malloc
 from comfy.model_management import VRAMState
@@ -568,6 +569,7 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
         # svd_image, _ = load_image(os.path.join(output_folder, f'{sdxl_args.saveprefix}_{count+1:05d}_.png'))
         del out
         del refiner_out
+
         i = ImageOps.exif_transpose(im)
         svd_image = i.convert("RGB")
         svd_image = np.array(svd_image).astype(np.float32) / 255.0
@@ -577,6 +579,7 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
         svd_positive, svd_negative, svd_latent = svd_conditioner.encode(svd_clipvision, latent, svd_vae, svd_width, svd_height, svd_video_frames, svd_motion_bucket_id, svd_fps, svd_augmentation_level)
         svd_latent = svd_latent["samples"]
         svd_noise = comfy.sample.prepare_noise(svd_latent, sdxl_args.seed, batch_inds)
+        
         svd_samples = comfy.sample.sample(sdxl_args,
                                       new_svd_model, 
                                       svd_noise, 
@@ -607,5 +610,130 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
         svd_num_frames = sdxl_args.svd_num_frames
         animated_webp = svd_saver.save_images(images, svd_fps, svd_filename_prefix, svd_lossless, svd_quality, svd_method, num_frames=svd_num_frames, prompt=None, extra_pnginfo=None)
     get_device_memory()
+
+    return model, samples
+
+def batch_runsvd(sdxl_args):
+    svd_loader = ImageOnlyCheckpointLoader()
+    svd_conditioner = SVD_img2vid_Conditioning()
+    svd_guidance = VideoLinearCFGGuidance()
+    svd_saver = SaveAnimatedWEBP()
+    svd_ckpt_name = sdxl_args.svd_ckpt_name
+    svd_model, svd_clipvision, svd_vae = svd_loader.load_checkpoint(svd_ckpt_name, output_vae=True, output_clip=True)
+    clear_output(wait=True)
+    svd_ckpt_name = sdxl_args.svd_ckpt_name
+    svd_min_cfg = sdxl_args.svd_min_cfg
+    svd_width = sdxl_args.svd_width
+    svd_height = sdxl_args.svd_height
+    svd_video_frames = sdxl_args.svd_video_frames
+    svd_motion_bucket_id = sdxl_args.svd_motion_bucket_id
+    svd_fps = sdxl_args. svd_fps
+    svd_augmentation_level = sdxl_args.svd_augmentation_level
+        
+    preview_format = "PNG"
+    if preview_format not in ["JPEG", "PNG"]:
+        preview_format = "JPEG"
+    
+    class LatentFormat:
+        def process_in(self, latent):
+            return latent * self.scale_factor
+    
+        def process_out(self, latent):
+            return latent / self.scale_factor
+    latent_format = SDXL()
+    use_preview = sdxl_args.use_preview
+    if use_preview:
+        previewer = latent_preview.Latent2RGBPreviewer(latent_format.latent_rgb_factors)#get_previewer(device, model.model.latent_format)
+    else:
+        previewer = latent_preview.get_previewer(device, model.model.latent_format)
+    pbar = comfy.utils.ProgressBar(sdxl_args.steps)
+    
+    image_widget = Image()
+    vbox = VBox([image_widget], layout=Layout(width="256px"))
+    display(vbox)
+
+    output_folder = sdxl_args.output_folder
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder, exist_ok=True)
+
+    count = len(os.listdir(output_folder))
+    
+    preview_save_path = os.path.join(sdxl_args.output_folder, f'{sdxl_args.saveprefix}_{count+1:05d}')
+    if not os.path.exists(preview_save_path):
+        os.makedirs(preview_save_path, exist_ok=True)
+
+    batch_folder = sorted([f for f in os.listdir(sdxl_args.init_image_folder_path_for_svd) if f.lower().endswith(('.png', '.jpeg', '.jpg'))])
+
+    preview_save_path = os.path.join(sdxl_args.output_folder, f'{sdxl_args.saveprefix}_{count+1:05d}')
+    if not os.path.exists(preview_save_path):
+        os.makedirs(preview_save_path, exist_ok=True)
+
+    def callback(step, x0, x, total_steps):
+        preview_bytes = None
+        idx = len(os.listdir(preview_save_path))
+        if previewer:
+            preview_bytes = previewer.decode_latent_to_preview_image(preview_format, x0)
+            if use_preview:
+                new_bytes = preview_bytes[1]
+                preview_save = os.path.join(preview_save_path, f'preview_{idx+1:05d}.png')
+                new_bytes.save(preview_save)
+                display_bytes = BytesIO()
+                new_bytes.save(display_bytes, format='PNG')
+                image_data = display_bytes.getvalue()
+                image_widget.value = image_data
+        pbar.update_absolute(step + 1, total_steps, preview_bytes)
+
+    frame_index = 0
+    svd_pbar = tqdm(total=len(batch_folder),desc='rendering')
+    while True:
+        frame_name = batch_folder[frame_index]
+        frame_path = os.path.join(sdxl_args.init_image_folder_path_for_svd, frame_name)
+        frame_index += 1
+        print(f'rendering frame: {frame_name}')
+
+        # Load and process the frame
+        latent, svd_mask = load_image(frame_path)
+        new_svd_model = svd_guidance.patch(svd_model, svd_min_cfg)[0]
+        svd_positive, svd_negative, svd_latent = svd_conditioner.encode(svd_clipvision, latent, svd_vae, svd_width, svd_height, svd_video_frames, svd_motion_bucket_id, svd_fps, svd_augmentation_level)
+        svd_latent = svd_latent["samples"]
+
+        noise_mask = None
+        batch_inds = None
+        svd_noise = comfy.sample.prepare_noise(svd_latent, sdxl_args.seed, batch_inds)
+        
+        svd_samples = comfy.sample.sample(sdxl_args,
+                                      new_svd_model, 
+                                      svd_noise, 
+                                      sdxl_args.steps, 
+                                      sdxl_args.cfg, 
+                                      sdxl_args.sampler_name, 
+                                      sdxl_args.scheduler,
+                                      svd_positive, 
+                                      svd_negative, 
+                                      svd_latent, 
+                                      denoise=sdxl_args.denoise, 
+                                      disable_noise=sdxl_args.refinerdisable_noise, 
+                                      start_step=sdxl_args.start_step, 
+                                      last_step=sdxl_args.last_step, 
+                                      force_full_denoise=sdxl_args.refinerforce_full_denoise, 
+                                      noise_mask=noise_mask, 
+                                      callback=callback, 
+                                      seed=sdxl_args.seed)
+        
+        count+=1
+        images = svd_vae.decode(svd_samples)
+        # images = rearrange(images, 'b h w c -> b c h w')
+        svd_fps_out = sdxl_args.svd_fps_out
+        svd_filename_prefix = sdxl_args.saveprefix
+        svd_lossless = sdxl_args.svd_lossless
+        svd_quality = sdxl_args.svd_quality
+        svd_method = sdxl_args.svd_method
+        svd_num_frames = sdxl_args.svd_num_frames
+        
+        animated_webp = svd_saver.save_images(images, svd_fps, svd_filename_prefix, svd_lossless, svd_quality, svd_method, num_frames=svd_num_frames, prompt=None, extra_pnginfo=None)
+        get_device_memory()
+        svd_pbar.update()
+        gc.collect()
+        torch.cuda.empty_cache()
 
     return model, samples
