@@ -1,0 +1,61 @@
+listen: "127.0.0.1"
+port: 8188
+enable_cors_header: null
+max_upload_size: 100.0
+
+extra_model_paths_config: null
+output_directory: null
+temp_directory: null
+input_directory: null
+auto_launch: false
+disable_auto_launch: false
+cuda_device: null
+
+cuda_malloc: false
+disable_cuda_malloc: false
+
+dont_upcast_attention: false
+
+force_fp32: false
+force_fp16: false
+
+bf16_unet: false
+fp16_unet: false
+fp8_e4m3fn_unet: false
+fp8_e5m2_unet: false
+fp16_vae: false
+fp32_vae: false
+bf16_vae: false
+
+cpu_vae: false
+
+fp8_e4m3fn_text_enc: false
+fp8_e5m2_text_enc: false
+fp16_text_enc: false
+fp32_text_enc: false
+
+directml: null
+
+disable_ipex_optimize: false
+
+cuda_malloc: true
+disable_cuda_malloc: false
+
+preview_method: auto
+use_split_cross_attention: false
+use_quad_cross_attention: false
+use_pytorch_cross_attention: false
+disable_xformers: false
+gpu_only: false
+highvram: false
+normalvram: true
+lowvram: false
+novram: false
+cpu: false
+disable_smart_memory: false
+deterministic: false
+dont_print_server: false
+quick_test_for_ci: false
+windows_standalone_build: false
+disable_metadata: false
+multi_user: false
