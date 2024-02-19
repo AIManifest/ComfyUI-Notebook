@@ -341,12 +341,11 @@ def create_video(image_folder, fps, video_name):
     video.release()
 
 def runsvd(sdxl_args, out, refiner_out, control_net):
-    svd_loader = ImageOnlyCheckpointLoader()
     svd_conditioner = SVD_img2vid_Conditioning()
     svd_guidance = VideoLinearCFGGuidance()
     svd_saver = SaveAnimatedWEBP()
     svd_ckpt_name = sdxl_args.svd_ckpt_name
-    svd_model, svd_clipvision, svd_vae = svd_loader.load_checkpoint(svd_ckpt_name, output_vae=True, output_clip=True)
+    svd_model, svd_clipvision, svd_vae = sdxl_args.svd_loaded#svd_loader.load_checkpoint(svd_ckpt_name, output_vae=True, output_clip=True)
     svd_ckpt_name = sdxl_args.svd_ckpt_name
     svd_min_cfg = sdxl_args.svd_min_cfg
     svd_width = sdxl_args.svd_width
@@ -356,7 +355,7 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
     svd_fps = sdxl_args. svd_fps
     svd_augmentation_level = sdxl_args.svd_augmentation_level
 
-    clear_output(wait=True)
+    # clear_output(wait=True)
 
     model, clip, vae = out
 
@@ -584,14 +583,16 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
         svd_positive, svd_negative, svd_latent = svd_conditioner.encode(svd_clipvision, latent, svd_vae, svd_width, svd_height, svd_video_frames, svd_motion_bucket_id, svd_fps, svd_augmentation_level)
         svd_latent = svd_latent["samples"]
         svd_noise = comfy.sample.prepare_noise(svd_latent, sdxl_args.seed, batch_inds)
+        svd_sampler = sdxl_args.svd_sampler
+        svd_scheduler = sdxl_args.svd_scheduler
         
         svd_samples = comfy.sample.sample(sdxl_args,
                                       new_svd_model, 
                                       svd_noise, 
                                       sdxl_args.steps, 
                                       sdxl_args.cfg, 
-                                      sdxl_args.sampler_name, 
-                                      sdxl_args.scheduler,
+                                      svd_sampler, 
+                                      svd_scheduler,
                                       svd_positive, 
                                       svd_negative, 
                                       svd_latent, 
@@ -663,12 +664,10 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
     return model, samples
 
 def batch_runsvd(sdxl_args):
-    svd_loader = ImageOnlyCheckpointLoader()
     svd_conditioner = SVD_img2vid_Conditioning()
     svd_guidance = VideoLinearCFGGuidance()
     svd_saver = SaveAnimatedWEBP()
-    svd_ckpt_name = sdxl_args.svd_ckpt_name
-    svd_model, svd_clipvision, svd_vae = svd_loader.load_checkpoint(svd_ckpt_name, output_vae=True, output_clip=True)
+    svd_model, svd_clipvision, svd_vae = sdxl_args.svd_loaded
     clear_output(wait=True)
     svd_ckpt_name = sdxl_args.svd_ckpt_name
     svd_min_cfg = sdxl_args.svd_min_cfg
@@ -678,8 +677,10 @@ def batch_runsvd(sdxl_args):
     svd_motion_bucket_id = sdxl_args.svd_motion_bucket_id
     svd_fps = sdxl_args. svd_fps
     svd_augmentation_level = sdxl_args.svd_augmentation_level
+    svd_sampler = sdxl_args.svd_sampler
+    svd_scheduler = sdxl_args.svd_scheduler
 
-    clear_output(wait=True)
+    # clear_output(wait=True)
         
     preview_format = "PNG"
     if preview_format not in ["JPEG", "PNG"]:
@@ -757,8 +758,8 @@ def batch_runsvd(sdxl_args):
                                       svd_noise, 
                                       sdxl_args.steps, 
                                       sdxl_args.cfg, 
-                                      sdxl_args.sampler_name, 
-                                      sdxl_args.scheduler,
+                                      svd_sampler, 
+                                      svd_scheduler,
                                       svd_positive, 
                                       svd_negative, 
                                       svd_latent, 
