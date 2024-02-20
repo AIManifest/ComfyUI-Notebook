@@ -311,14 +311,6 @@ def loadsdxl(sdxl_args):
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
     
-    if sdxl_args.lora_name != None:
-        lora = load_lora(model, clip, sdxl_args.lora_name, sdxl_args.strength_model, sdxl_args.strength_clip)
-        old_model, old_clip, old_out = model, clip, out
-        model, clip = lora
-        del old_model
-        del old_clip
-        del old_out
-        out = (model, clip, vae)
     end = time.time()
     print(f'model loaded in {end-start:.02f} seconds')
     return out
@@ -336,6 +328,22 @@ def create_video(image_folder, fps, video_name):
 
 def runsdxl(sdxl_args, out, control_net):
     model, clip, vae = out
+
+     #Lora Loading
+    if sdxl_args.lora_name is not None:
+        if isinstance(sdxl_args.lora_name, dict):
+            strength_model_clip = None
+            # If it's a dictionary, iterate through the items and load each one
+            for lora_item, strength_model_clip in sdxl_args.lora_name.items():
+                print(f'Multiple Loras detected, loading {lora_item}')
+                # Get the strengths for the current lora_name or use defaults
+                strength_model = strength_model_clip
+                strength_clip = strength_model_clip
+                print(f'running lora with strength_model: {strength_model}, strength_clip: {strength_clip}')    
+                model, clip = load_lora(model, clip, lora_item, strength_model, strength_clip)
+        elif isinstance(sdxl_args.lora_name, str):
+            # If it's a string, load only that string
+            model, clip = load_lora(model, clip, sdxl_args.lora_name, sdxl_args.strength_model, sdxl_args.strength_clip)
 
     if sdxl_args.stop_at_last_layer != None:
         clip = clip.clone()
@@ -499,7 +507,7 @@ def runsdxl(sdxl_args, out, control_net):
 
                 if sdxl_args is not None:
                     for key, value in sdxl_args.__dict__.items():
-                        metadata.add_text(key, json.dumps(value))
+                        metadata.add_text(key, json.dumps(str(value)))
             im.save(os.path.join(output_folder, f'{sdxl_args.saveprefix}_{count+1:05d}_.png'), pnginfo=metadata, compress_level=4)
         if sdxl_args.create_video_preview:
             create_video(preview_save_path, 5, f'{sdxl_args.saveprefix}_{count+1:05d}_.mp4')
