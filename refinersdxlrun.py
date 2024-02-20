@@ -181,7 +181,7 @@ def runsdxlrefiner(sdxl_args, samples, model, refined_out):
 
             if sdxl_args is not None:
                 for key, value in sdxl_args.__dict__.items():
-                    metadata.add_text(key, json.dumps(value))
+                    metadata.add_text(key, json.dumps(str(value)))
         im.save(os.path.join(output_folder, f'{sdxl_args.saveprefix}_{count+1:05d}_refined.png'), pnginfo=metadata, compress_level=4)
         count+=1
 
