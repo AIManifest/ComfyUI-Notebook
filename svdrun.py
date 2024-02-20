@@ -317,14 +317,6 @@ def loadsdxl(sdxl_args):
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
     
-    if sdxl_args.lora_name != None:
-        lora = load_lora(model, clip, sdxl_args.lora_name, sdxl_args.strength_model, sdxl_args.strength_clip)
-        old_model, old_clip, old_out = model, clip, out
-        model, clip = lora
-        del old_model
-        del old_clip
-        del old_out
-        out = (model, clip, vae)
     end = time.time()
     print(f'model loaded in {end-start:.02f} seconds')
     return out
@@ -358,6 +350,22 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
     # clear_output(wait=True)
 
     model, clip, vae = out
+
+    #Lora Loading
+    if sdxl_args.lora_name is not None:
+        if isinstance(sdxl_args.lora_name, dict):
+            strength_model_clip = None
+            # If it's a dictionary, iterate through the items and load each one
+            for lora_item, strength_model_clip in sdxl_args.lora_name.items():
+                print(f'Multiple Loras detected, loading {lora_item}')
+                # Get the strengths for the current lora_name or use defaults
+                strength_model = strength_model_clip
+                strength_clip = strength_model_clip
+                print(f'running lora with strength_model: {strength_model}, strength_clip: {strength_clip}')    
+                model, clip = load_lora(model, clip, lora_item, strength_model, strength_clip)
+        elif isinstance(sdxl_args.lora_name, str):
+            # If it's a string, load only that string
+            model, clip = load_lora(model, clip, sdxl_args.lora_name, sdxl_args.strength_model, sdxl_args.strength_clip)
 
     if sdxl_args.stop_at_last_layer != None:
         clip = clip.clone()
@@ -579,6 +587,10 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
         svd_image = np.array(svd_image).astype(np.float32) / 255.0
         svd_image = torch.from_numpy(svd_image)[None,]
         latent = svd_image#svd_vae.encode(svd_image)
+        if sdxl_args.use_init_image:
+            print('RUNNING SVD WITH IMAGE INIT')
+            new_image, new_mask = load_image(sdxl_args.svd_init_image)
+            latent = vae.encode(new_image)
         new_svd_model = svd_guidance.patch(svd_model, svd_min_cfg)[0]
         svd_positive, svd_negative, svd_latent = svd_conditioner.encode(svd_clipvision, latent, svd_vae, svd_width, svd_height, svd_video_frames, svd_motion_bucket_id, svd_fps, svd_augmentation_level)
         svd_latent = svd_latent["samples"]
@@ -589,8 +601,8 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
         svd_samples = comfy.sample.sample(sdxl_args,
                                       new_svd_model, 
                                       svd_noise, 
-                                      sdxl_args.steps, 
-                                      sdxl_args.cfg, 
+                                      sdxl_args.svd_steps, 
+                                      sdxl_args.svd_cfg, 
                                       svd_sampler, 
                                       svd_scheduler,
                                       svd_positive, 
@@ -598,8 +610,8 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
                                       svd_latent, 
                                       denoise=sdxl_args.denoise, 
                                       disable_noise=sdxl_args.refinerdisable_noise, 
-                                      start_step=sdxl_args.start_step, 
-                                      last_step=sdxl_args.last_step, 
+                                      start_step=sdxl_args.svd_start_step, 
+                                      last_step=sdxl_args.svd_last_step, 
                                       force_full_denoise=sdxl_args.refinerforce_full_denoise, 
                                       noise_mask=noise_mask, 
                                       callback=callback, 
@@ -756,8 +768,8 @@ def batch_runsvd(sdxl_args):
         svd_samples = comfy.sample.sample(sdxl_args,
                                       new_svd_model, 
                                       svd_noise, 
-                                      sdxl_args.steps, 
-                                      sdxl_args.cfg, 
+                                      sdxl_args.svd_steps, 
+                                      sdxl_args.svd_cfg, 
                                       svd_sampler, 
                                       svd_scheduler,
                                       svd_positive, 
@@ -765,8 +777,8 @@ def batch_runsvd(sdxl_args):
                                       svd_latent, 
                                       denoise=sdxl_args.denoise, 
                                       disable_noise=sdxl_args.refinerdisable_noise, 
-                                      start_step=sdxl_args.start_step, 
-                                      last_step=sdxl_args.last_step, 
+                                      start_step=sdxl_args.svd_start_step, 
+                                      last_step=sdxl_args.svd_last_step, 
                                       force_full_denoise=sdxl_args.refinerforce_full_denoise, 
                                       noise_mask=noise_mask, 
                                       callback=callback, 
