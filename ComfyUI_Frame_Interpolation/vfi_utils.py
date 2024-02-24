@@ -10,6 +10,7 @@ import gc
 import torchvision.transforms.functional as transform
 from comfy.model_management import soft_empty_cache, get_torch_device
 import numpy as np
+from tqdm.auto import trange
 
 BASE_MODEL_DOWNLOAD_URLS = [
     "https://github.com/styler00dollar/VSGAN-tensorrt-docker/releases/download/models/",
@@ -148,7 +149,7 @@ def generic_frame_loop(
 
     number_of_frames_processed_since_last_cleared_cuda_cache = 0
     
-    for frame_itr in range(len(frames) - 1): # Skip the final frame since there are no frames after it
+    for frame_itr in trange(len(frames) - 1): # Skip the final frame since there are no frames after it
         #Ensure that input frames are in fp32 - the same dtype as model
         frame0 = frames[frame_itr:frame_itr+1].float()
         frame1 = frames[frame_itr+1:frame_itr+2].float()
