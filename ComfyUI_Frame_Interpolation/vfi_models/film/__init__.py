@@ -6,6 +6,7 @@ import typing
 from vfi_utils import InterpolationStateList, load_file_from_github_release, preprocess_frames, postprocess_frames
 import pathlib
 import gc
+from tqdm.auto import trange
 
 MODEL_TYPE = pathlib.Path(__file__).parent.name
 DEVICE = get_torch_device()
@@ -79,7 +80,7 @@ class FILM_VFI:
         frames = preprocess_frames(frames)
         number_of_frames_processed_since_last_cleared_cuda_cache = 0
         output_frames = []
-        for frame_itr in range(len(frames) - 1): # Skip the final frame since there are no frames after it
+        for frame_itr in trange(len(frames) - 1): # Skip the final frame since there are no frames after it
             if interpolation_states is not None and interpolation_states.is_frame_skipped(frame_itr):
                 continue
             #Ensure that input frames are in fp32 - the same dtype as model
