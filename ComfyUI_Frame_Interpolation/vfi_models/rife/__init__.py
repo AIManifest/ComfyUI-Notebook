@@ -7,6 +7,7 @@ from comfy.model_management import get_torch_device
 import re
 from functools import cmp_to_key
 from packaging import version
+from tqdm.auto import trange
 
 MODEL_TYPE = pathlib.Path(__file__).parent.name
 CKPT_NAME_VER_DICT = {
