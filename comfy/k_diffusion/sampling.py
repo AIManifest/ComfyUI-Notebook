@@ -768,11 +768,11 @@ def generic_step_sampler(model, x, sigmas, extra_args=None, callback=None, disab
 
 
 @torch.no_grad()
-def sample_ddpm(model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler=None):
+def sample_ddpm(args, model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler=None):
     return generic_step_sampler(model, x, sigmas, extra_args, callback, disable, noise_sampler, DDPMSampler_step)
 
 @torch.no_grad()
-def sample_lcm(model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler=None):
+def sample_lcm(args, model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler=None):
     extra_args = {} if extra_args is None else extra_args
     noise_sampler = default_noise_sampler(x) if noise_sampler is None else noise_sampler
     s_in = x.new_ones([x.shape[0]])
