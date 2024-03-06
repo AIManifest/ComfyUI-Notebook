@@ -332,6 +332,138 @@ def create_video(image_folder, fps, video_name):
     cv2.destroyAllWindows()
     video.release()
 
+
+import nodes
+import glob
+import os
+from PIL import Image as pil_image
+from PIL import ImageOps
+import numpy as np
+import torch
+import comfy
+from IPython.display import display
+from comfy_extras.nodes_upscale_model import UpscaleModelLoader, ImageUpscaleWithModel
+import sys
+from einops import rearrange
+from torchvision.transforms.functional import to_pil_image
+from tqdm.auto import tqdm
+import cv2
+
+# Load the comfy models
+comfy_upscaler = UpscaleModelLoader()
+loaded_upscaler = comfy_upscaler.load_model("4x_NMKD-YandereNeo-Lite_320k.pth")
+upscaler = ImageUpscaleWithModel()
+sd = comfy.utils.load_torch_file("/workspace/ComfyUI-Notebook/models/vae/sdxl_vae.safetensors")
+vae = comfy.sd.VAE(sd=sd)
+sharpened_upscaler = comfy_upscaler.load_model("4x-UltraSharp.pth")
+
+# Define a function to upscale an image
+def upscale_image(image_path,loaded_upscaler):
+        # image_path = folder_paths.get_annotated_filepath(image)
+    i = ImageOps.exif_transpose(image_path)
+    image = i.convert("RGB")
+    image = np.array(image).astype(np.float32) / 255.0
+    image = torch.from_numpy(image)[None,]
+    if 'A' in i.getbands():
+        mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
+        mask = 1. - torch.from_numpy(mask)
+    else:
+        mask = torch.zeros((64,64), dtype=torch.float32, device="cpu")
+
+    with torch.inference_mode():
+        upscale_model = loaded_upscaler[0]
+        samples = image
+        vaeimage = upscaler.upscale(upscale_model, samples)
+        vaeimage = rearrange(vaeimage[0], 'b h w c -> b c h w')
+        vaeimage = vaeimage.squeeze(0)
+        vaeimage = to_pil_image(vaeimage)
+        return vaeimage
+
+def upscale_samples(sdxl_args, video_path, output_folder):
+    force_resize = sdxl_args.force_resize
+    sharpen = sdxl_args.sharpen
+    # Video file path
+    # Output folder path
+    os.makedirs(output_folder, exist_ok=True)
+    
+    # Open the video file
+    cap = cv2.VideoCapture(video_path)
+    
+    # Check if the video opened successfully
+    if not cap.isOpened():
+        print("Error opening video file")
+        sys.exit(1)
+    
+    # Get video properties
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    total_pixels = int(frame_width*frame_height)
+    
+    max_allowed_pixels = 1024*704
+    
+    if total_pixels>max_allowed_pixels or force_resize:
+        optimized_framewidth = frame_width - 256
+        optimized_frameheight = frame_height - 256
+    
+    final_frame_width = frame_width*4
+    final_frame_height = frame_height*4
+    
+    # Output video path
+    output_video_path = os.path.join(output_folder, f"upscaled_{os.path.basename(video_path)}")
+    print(output_video_path)
+    # Define the codec and create VideoWriter object
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_video_path, fourcc, fps, (final_frame_width, final_frame_height))
+    
+    # Process each frame
+    for frame_num in tqdm(range(frame_count)):
+        ret, frame = cap.read()
+        if total_pixels>max_allowed_pixels or force_resize:
+            frame = cv2.resize(frame, (optimized_framewidth, optimized_frameheight), interpolation=cv2.INTER_LANCZOS4)
+        if not ret:
+            break
+    
+        # Convert the frame to a PIL image
+        pil_frame = pil_image.fromarray(frame)
+    
+        # Upscale the frame
+        upscaled_frame = upscale_image(pil_frame,loaded_upscaler)
+        upscaled_frame = upscaled_frame.convert("RGB")  # This removes the alpha channel
+    
+        # Convert the upscaled frame back to a numpy array
+        upscaled_frame_np = cv2.cvtColor(np.array(upscaled_frame), cv2.COLOR_RGB2BGR)
+        
+        cv2_image = cv2.cvtColor(upscaled_frame_np, cv2.COLOR_RGB2BGR)
+        cv2_image = cv2_image.astype(np.uint8)
+        if total_pixels>max_allowed_pixels or force_resize:
+            cv2_image = cv2.resize(cv2_image, (final_frame_width, final_frame_height), interpolation=cv2.INTER_LANCZOS4)
+        if sharpen:
+            print('sharpening')
+            cv2_image = cv2.resize(cv2_image,(optimized_framewidth, optimized_frameheight), interpolation=cv2.INTER_LANCZOS4)
+            pil_frame = pil_image.fromarray(cv2_image)
+            upscaled_image = upscale_image(pil_frame,sharpened_upscaler)
+            
+            # Upscale the frame
+            upscaled_frame = upscaled_image.convert("RGB")  # This removes the alpha channel
+    
+            # Convert the upscaled frame back to a numpy array
+            upscaled_frame_np = cv2.cvtColor(np.array(upscaled_frame), cv2.COLOR_RGB2BGR)
+    
+            cv2_image = cv2.cvtColor(upscaled_frame_np, cv2.COLOR_RGB2BGR)
+            cv2_image = cv2_image.astype(np.uint8)
+            cv2_image = cv2.resize(cv2_image,(final_frame_width, final_frame_height), interpolation=cv2.INTER_LANCZOS4)
+        # Write the upscaled frame to the output video
+        out.write(np.array(cv2_image))
+    
+    # Release resources
+    cap.release()
+    out.release()
+    return output_video_path
+
+
 def runsvd(sdxl_args, out, refiner_out, control_net):
     svd_conditioner = SVD_img2vid_Conditioning()
     svd_guidance = VideoLinearCFGGuidance()
@@ -650,11 +782,13 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
                                             extra_pnginfo=None,
                                             audio=None,
                                             unique_id=None,
-                                            manual_format_widgets=None,
+                                            manual_format_widgets={'pix_fmt': 'yuv420p', 'crf': 17, 'save_metadata': True},
                                             batch_manager=None)
         
         video_display_list = os.listdir(os.path.join(os.path.dirname(__file__), "output"))
         video_display_path = os.path.join(os.path.dirname(__file__), f"output/{video_display_list[-1]}")
+        if sdxl_args.upscaled_output:
+            video_display_path = upscale_samples(sdxl_args, video_display_path, output_folder)
         
         def file_to_base64(path):
             with open(path, "rb") as file:
@@ -669,6 +803,8 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
         </video>
         """
         display(HTML(video_html))
+        gc.collect()
+        torch.cuda.empty_cache()
 
         # animated_webp = svd_saver.save_images(images, svd_fps, svd_filename_prefix, svd_lossless, svd_quality, svd_method, num_frames=svd_num_frames, prompt=None, extra_pnginfo=None)
     get_device_memory()
