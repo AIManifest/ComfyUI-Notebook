@@ -1,8 +1,8 @@
-from .utils import load_torch_file, transformers_convert, common_upscale
+from .utils import load_torch_file, transformers_convert, state_dict_prefix_replace
 import os
 import torch
-import contextlib
 import json
+import logging
 
 import comfy.ops
 import comfy.model_patcher
@@ -34,6 +34,7 @@ class ClipVisionModel():
         with open(json_config) as f:
             config = json.load(f)
 
+        self.image_size = config.get("image_size", 224)
         self.load_device = comfy.model_management.text_encoder_device()
         offload_device = comfy.model_management.text_encoder_offload_device()
         self.dtype = comfy.model_management.text_encoder_dtype(self.load_device)
@@ -41,12 +42,16 @@ class ClipVisionModel():
         self.model.eval()
 
         self.patcher = comfy.model_patcher.ModelPatcher(self.model, load_device=self.load_device, offload_device=offload_device)
+
     def load_sd(self, sd):
         return self.model.load_state_dict(sd, strict=False)
 
+    def get_sd(self):
+        return self.model.state_dict()
+
     def encode_image(self, image):
         comfy.model_management.load_model_gpu(self.patcher)
-        pixel_values = clip_preprocess(image.to(self.load_device)).float()
+        pixel_values = clip_preprocess(image.to(self.load_device), size=self.image_size).float()
         out = self.model(pixel_values=pixel_values, intermediate_output=-2)
 
         outputs = Output()
@@ -76,6 +81,9 @@ def convert_to_transformers(sd, prefix):
             sd['visual_projection.weight'] = sd.pop("{}proj".format(prefix)).transpose(0, 1)
 
         sd = transformers_convert(sd, prefix, "vision_model.", 48)
+    else:
+        replace_prefix = {prefix: ""}
+        sd = state_dict_prefix_replace(sd, replace_prefix)
     return sd
 
 def load_clipvision_from_sd(sd, prefix="", convert_keys=False):
@@ -86,14 +94,17 @@ def load_clipvision_from_sd(sd, prefix="", convert_keys=False):
     elif "vision_model.encoder.layers.30.layer_norm1.weight" in sd:
         json_config = os.path.join(os.path.dirname(os.path.realpath(__file__)), "clip_vision_config_h.json")
     elif "vision_model.encoder.layers.22.layer_norm1.weight" in sd:
-        json_config = os.path.join(os.path.dirname(os.path.realpath(__file__)), "clip_vision_config_vitl.json")
+        if sd["vision_model.embeddings.position_embedding.weight"].shape[0] == 577:
+            json_config = os.path.join(os.path.dirname(os.path.realpath(__file__)), "clip_vision_config_vitl_336.json")
+        else:
+            json_config = os.path.join(os.path.dirname(os.path.realpath(__file__)), "clip_vision_config_vitl.json")
     else:
         return None
 
     clip = ClipVisionModel(json_config)
     m, u = clip.load_sd(sd)
     if len(m) > 0:
-        print("missing clip vision:", m)
+        logging.warning("missing clip vision: {}".format(m))
     u = set(u)
     keys = list(sd.keys())
     for k in keys:

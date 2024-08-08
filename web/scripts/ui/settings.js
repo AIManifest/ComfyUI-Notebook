@@ -16,7 +16,17 @@ export class ComfySettingsDialog extends ComfyDialog {
 			},
 			[
 				$el("table.comfy-modal-content.comfy-table", [
-					$el("caption", { textContent: "Settings" }),
+					$el(
+						"caption",
+						{ textContent: "Settings" },
+						$el("button.comfy-btn", {
+							type: "button",
+							textContent: "\u00d7",
+							onclick: () => {
+								this.element.close();
+							},
+						})
+					),
 					$el("tbody", { $: (tbody) => (this.textElement = tbody) }),
 					$el("button", {
 						type: "button",
@@ -37,6 +47,17 @@ export class ComfySettingsDialog extends ComfyDialog {
 		return Object.values(this.settingsLookup);
 	}
 
+	#dispatchChange(id, value, oldValue) {
+		this.dispatchEvent(
+			new CustomEvent(id + ".change", {
+				detail: {
+					value,
+					oldValue
+				},
+			})
+		);
+	}
+
 	async load() {
 		if (this.app.storageLocation === "browser") {
 			this.settingsValues = localStorage;
@@ -46,7 +67,9 @@ export class ComfySettingsDialog extends ComfyDialog {
 
 		// Trigger onChange for any settings added before load
 		for (const id in this.settingsLookup) {
-			this.settingsLookup[id].onChange?.(this.settingsValues[this.getId(id)]);
+			const value = this.settingsValues[this.getId(id)];
+			this.settingsLookup[id].onChange?.(value);
+			this.#dispatchChange(id, value);
 		}
 	}
 
@@ -80,6 +103,7 @@ export class ComfySettingsDialog extends ComfyDialog {
 		if (id in this.settingsLookup) {
 			this.settingsLookup[id].onChange?.(value, oldValue);
 		}
+		this.#dispatchChange(id, value, oldValue);
 
 		await api.storeSetting(id, value);
 	}
@@ -126,6 +150,8 @@ export class ComfySettingsDialog extends ComfyDialog {
 			onChange,
 			name,
 			render: () => {
+				if (type === "hidden") return;
+
 				const setter = (v) => {
 					if (onChange) {
 						onChange(v, value);
@@ -300,7 +326,7 @@ export class ComfySettingsDialog extends ComfyDialog {
 				},
 				[$el("th"), $el("th", { style: { width: "33%" } })]
 			),
-			...this.settings.sort((a, b) => a.name.localeCompare(b.name)).map((s) => s.render())
+			...this.settings.sort((a, b) => a.name.localeCompare(b.name)).map((s) => s.render()).filter(Boolean)
 		);
 		this.element.showModal();
 	}

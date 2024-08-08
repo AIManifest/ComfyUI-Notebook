@@ -24,7 +24,7 @@ export function getPngMetadata(file) {
 				const length = dataView.getUint32(offset);
 				// Get the chunk type
 				const type = String.fromCharCode(...pngData.slice(offset + 4, offset + 8));
-				if (type === "tEXt" || type == "comf") {
+				if (type === "tEXt" || type == "comf" || type === "iTXt") {
 					// Get the keyword
 					let keyword_end = offset + 8;
 					while (pngData[keyword_end] !== 0) {
@@ -33,7 +33,7 @@ export function getPngMetadata(file) {
 					const keyword = String.fromCharCode(...pngData.slice(offset + 8, keyword_end));
 					// Get the text
 					const contentArraySegment = pngData.slice(keyword_end + 1, offset + 8 + length);
-					const contentJson = Array.from(contentArraySegment).map(s=>String.fromCharCode(s)).join('')
+					const contentJson = new TextDecoder("utf-8").decode(contentArraySegment);
 					txt_chunks[keyword] = contentJson;
 				}
 
@@ -49,7 +49,7 @@ export function getPngMetadata(file) {
 
 function parseExifData(exifData) {
 	// Check for the correct TIFF header (0x4949 for little-endian or 0x4D4D for big-endian)
-	const isLittleEndian = new Uint16Array(exifData.slice(0, 2))[0] === 0x4949;
+	const isLittleEndian = String.fromCharCode(...exifData.slice(0, 2)) === "II";
 
 	// Function to read 16-bit and 32-bit integers from binary data
 	function readInt(offset, isLittleEndian, length) {
@@ -134,6 +134,7 @@ export function getWebpMetadata(file) {
 						let index = value.indexOf(':');
 						txt_chunks[value.slice(0, index)] = value.slice(index + 1);
 					}
+					break;
 				}
 
 				offset += 8 + chunk_length;
@@ -163,6 +164,79 @@ export function getLatentMetadata(file) {
 	});
 }
 
+
+function getString(dataView, offset, length) {
+	let string = '';
+	for (let i = 0; i < length; i++) {
+		string += String.fromCharCode(dataView.getUint8(offset + i));
+	}
+	return string;
+}
+
+// Function to parse the Vorbis Comment block
+function parseVorbisComment(dataView) {
+	let offset = 0;
+	const vendorLength = dataView.getUint32(offset, true);
+	offset += 4;
+	const vendorString = getString(dataView, offset, vendorLength);
+	offset += vendorLength;
+
+	const userCommentListLength = dataView.getUint32(offset, true);
+	offset += 4;
+	const comments = {};
+	for (let i = 0; i < userCommentListLength; i++) {
+		const commentLength = dataView.getUint32(offset, true);
+		offset += 4;
+		const comment = getString(dataView, offset, commentLength);
+		offset += commentLength;
+
+		const ind = comment.indexOf('=')
+		const key = comment.substring(0, ind);
+
+		comments[key] = comment.substring(ind+1);
+	}
+
+	return comments;
+}
+
+// Function to read a FLAC file and parse Vorbis comments
+export function getFlacMetadata(file) {
+	return new Promise((r) => {
+		const reader = new FileReader();
+		reader.onload = function(event) {
+			const arrayBuffer = event.target.result;
+			const dataView = new DataView(arrayBuffer);
+
+			// Verify the FLAC signature
+			const signature = String.fromCharCode(...new Uint8Array(arrayBuffer, 0, 4));
+			if (signature !== 'fLaC') {
+				console.error('Not a valid FLAC file');
+				return;
+			}
+
+			// Parse metadata blocks
+			let offset = 4;
+			let vorbisComment = null;
+			while (offset < dataView.byteLength) {
+				const isLastBlock = dataView.getUint8(offset) & 0x80;
+				const blockType = dataView.getUint8(offset) & 0x7F;
+				const blockSize = dataView.getUint32(offset, false) & 0xFFFFFF;
+				offset += 4;
+
+				if (blockType === 4) { // Vorbis Comment block type
+					vorbisComment = parseVorbisComment(new DataView(arrayBuffer, offset, blockSize));
+				}
+
+				offset += blockSize;
+				if (isLastBlock) break;
+			}
+
+			r(vorbisComment);
+		};
+		reader.readAsArrayBuffer(file);
+	});
+}
+
 export async function importA1111(graph, parameters) {
 	const p = parameters.lastIndexOf("\nSteps:");
 	if (p > -1) {
@@ -170,9 +244,12 @@ export async function importA1111(graph, parameters) {
 		const opts = parameters
 			.substr(p)
 			.split("\n")[1]
-			.split(",")
+			.match(new RegExp("\\s*([^:]+:\\s*([^\"\\{].*?|\".*?\"|\\{.*?\\}))\\s*(,|$)", "g"))
 			.reduce((p, n) => {
 				const s = n.split(":");
+				if (s[1].endsWith(',')) {
+					s[1] = s[1].substr(0, s[1].length -1);
+				}
 				p[s[0].trim().toLowerCase()] = s[1].trim();
 				return p;
 			}, {});
@@ -191,6 +268,7 @@ export async function importA1111(graph, parameters) {
 			const vaeLoaderNode = LiteGraph.createNode("VAELoader");
 			const saveNode = LiteGraph.createNode("SaveImage");
 			let hrSamplerNode = null;
+			let hrSteps = null;
 
 			const ceil64 = (v) => Math.ceil(v / 64) * 64;
 
@@ -290,6 +368,9 @@ export async function importA1111(graph, parameters) {
 				model(v) {
 					setWidgetValue(ckptNode, "ckpt_name", v, true);
 				},
+				"vae"(v) {
+					setWidgetValue(vaeLoaderNode, "vae_name", v, true);
+				},
 				"cfg scale"(v) {
 					setWidgetValue(samplerNode, "cfg", +v);
 				},
@@ -316,6 +397,7 @@ export async function importA1111(graph, parameters) {
 					const h = ceil64(+wxh[1]);
 					const hrUp = popOpt("hires upscale");
 					const hrSz = popOpt("hires resize");
+					hrSteps = popOpt("hires steps");
 					let hrMethod = popOpt("hires upscaler");
 
 					setWidgetValue(imageNode, "width", w);
@@ -398,7 +480,7 @@ export async function importA1111(graph, parameters) {
 			}
 
 			if (hrSamplerNode) {
-				setWidgetValue(hrSamplerNode, "steps", getWidget(samplerNode, "steps").value);
+				setWidgetValue(hrSamplerNode, "steps", hrSteps? +hrSteps : getWidget(samplerNode, "steps").value);
 				setWidgetValue(hrSamplerNode, "cfg", getWidget(samplerNode, "cfg").value);
 				setWidgetValue(hrSamplerNode, "scheduler", getWidget(samplerNode, "scheduler").value);
 				setWidgetValue(hrSamplerNode, "sampler_name", getWidget(samplerNode, "sampler_name").value);
@@ -415,7 +497,7 @@ export async function importA1111(graph, parameters) {
 
 			graph.arrange();
 
-			for (const opt of ["model hash", "ensd"]) {
+			for (const opt of ["model hash", "ensd", "version", "vae hash", "ti hashes", "lora hashes", "hashes"]) {
 				delete opts[opt];
 			}
 
