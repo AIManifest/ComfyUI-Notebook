@@ -37,16 +37,16 @@ def prepare_sampling(model, noise_shape, positive, negative, noise_mask):
 def cleanup_additional_models(models):
     logging.warning("Warning: comfy.sample.cleanup_additional_models isn't used anymore and can be removed")
 
-def sample(model, noise, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=1.0, disable_noise=False, start_step=None, last_step=None, force_full_denoise=False, noise_mask=None, sigmas=None, callback=None, disable_pbar=False, seed=None):
+def sample(args, model, noise, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=1.0, disable_noise=False, start_step=None, last_step=None, force_full_denoise=False, noise_mask=None, sigmas=None, callback=None, disable_pbar=False, seed=None):
     # print(f"model: {model}, noise: {noise}, steps: {steps}, cfg: {cfg}, sampler: {sampler_name}, scheduler: {scheduler}, positive: {positive}, negative: {negative}, latent_image: {latent_image}, denoise: {denoise}, disable_noise: {disable_noise}, start_step: {start_step}, last_step: {last_step}, force_full_denoise: {force_full_denoise}, noise_mask: {noise_mask}, callback: {callback}, seed: {seed}")
 
-    sampler = comfy.samplers.KSampler(model, steps=steps, device=model.load_device, sampler=sampler_name, scheduler=scheduler, denoise=denoise, model_options=model.model_options)
+    sampler = comfy.samplers.KSampler(args, model, steps=steps, device=model.load_device, sampler=sampler_name, scheduler=scheduler, denoise=denoise, model_options=model.model_options)
 
-    samples = sampler.sample(noise, positive, negative, cfg=cfg, latent_image=latent_image, start_step=start_step, last_step=last_step, force_full_denoise=force_full_denoise, denoise_mask=noise_mask, sigmas=sigmas, callback=callback, disable_pbar=disable_pbar, seed=seed)
+    samples = sampler.sample(args, noise, positive, negative, cfg=cfg, latent_image=latent_image, start_step=start_step, last_step=last_step, force_full_denoise=force_full_denoise, denoise_mask=noise_mask, sigmas=sigmas, callback=callback, disable_pbar=disable_pbar, seed=seed)
     samples = samples.to(comfy.model_management.intermediate_device())
     return samples
 
-def sample_custom(model, noise, cfg, sampler, sigmas, positive, negative, latent_image, noise_mask=None, callback=None, disable_pbar=False, seed=None):
-    samples = comfy.samplers.sample(model, noise, positive, negative, cfg, model.load_device, sampler, sigmas, model_options=model.model_options, latent_image=latent_image, denoise_mask=noise_mask, callback=callback, disable_pbar=disable_pbar, seed=seed)
+def sample_custom(args, model, noise, cfg, sampler, sigmas, positive, negative, latent_image, noise_mask=None, callback=None, disable_pbar=False, seed=None):
+    samples = comfy.samplers.sample(args, model, noise, positive, negative, cfg, model.load_device, sampler, sigmas, model_options=model.model_options, latent_image=latent_image, denoise_mask=noise_mask, callback=callback, disable_pbar=disable_pbar, seed=seed)
     samples = samples.to(comfy.model_management.intermediate_device())
     return samples
