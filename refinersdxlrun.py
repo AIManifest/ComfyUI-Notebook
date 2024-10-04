@@ -41,8 +41,8 @@ def loadsdxlrefiner(sdxl_args):
     refiner = nodes.CheckpointLoaderSimple()
     refined_out = refiner.load_checkpoint(
             sdxl_args.refinerckpt_name,
-            output_vae=True,
-            output_clip=True,
+            # output_vae=True,
+            # output_clip=True,
             )
     clear_output()
     

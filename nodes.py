@@ -1334,7 +1334,7 @@ class SetLatentNoiseMask:
         s["noise_mask"] = mask.reshape((-1, 1, mask.shape[-2], mask.shape[-1]))
         return (s,)
 
-def common_ksampler(model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent, denoise=1.0, disable_noise=False, start_step=None, last_step=None, force_full_denoise=False):
+def common_ksampler(args, model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent, denoise=1.0, disable_noise=False, start_step=None, last_step=None, force_full_denoise=False):
     latent_image = latent["samples"]
     latent_image = comfy.sample.fix_empty_latent_channels(model, latent_image)
 
@@ -1350,7 +1350,7 @@ def common_ksampler(model, seed, steps, cfg, sampler_name, scheduler, positive, 
 
     callback = latent_preview.prepare_callback(model, steps)
     disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
-    samples = comfy.sample.sample(model, noise, steps, cfg, sampler_name, scheduler, positive, negative, latent_image,
+    samples = comfy.sample.sample(args, model, noise, steps, cfg, sampler_name, scheduler, positive, negative, latent_image,
                                   denoise=denoise, disable_noise=disable_noise, start_step=start_step, last_step=last_step,
                                   force_full_denoise=force_full_denoise, noise_mask=noise_mask, callback=callback, disable_pbar=disable_pbar, seed=seed)
     out = latent.copy()
@@ -1379,8 +1379,8 @@ class KSampler:
 
     CATEGORY = "sampling"
 
-    def sample(self, model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=1.0):
-        return common_ksampler(model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=denoise)
+    def sample(self, args, model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=1.0):
+        return common_ksampler(args, model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=denoise)
 
 class KSamplerAdvanced:
     @classmethod

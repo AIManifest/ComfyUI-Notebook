@@ -9,11 +9,24 @@ import folder_paths
 import comfy.utils
 import logging
 import yaml
+import torch.nn as nn
+import enum
+from ipywidgets import Image as ipyimage
+from ipywidgets import VBox, Layout
+from IPython.display import display
+from io import BytesIO
+
 
 with open('comfy_notebook.yaml', 'r') as file:
     data = yaml.safe_load(file)
     
-preview_method = data["preview_method"]
+# preview_method = data["preview_method"]
+
+class LatentPreviewMethod(enum.Enum):
+    NoPreviews = "none"
+    Auto = "auto"
+    Latent2RGB = "latent2rgb"
+    TAESD = "taesd"
 
 MAX_PREVIEW_RESOLUTION = 512
 
@@ -50,10 +63,9 @@ class Latent2RGBPreviewer(LatentPreviewer):
         latent_image = x0[0].permute(1, 2, 0) @ self.latent_rgb_factors
         return preview_to_image(latent_image)
 
-
 def get_previewer(device, latent_format):
     previewer = None
-    method = args.preview_method
+    method = LatentPreviewMethod.Auto
     if method != LatentPreviewMethod.NoPreviews:
         # TODO previewer methods
         taesd_decoder_path = None
@@ -87,6 +99,10 @@ def prepare_callback(model, steps, x0_output_dict=None):
 
     previewer = get_previewer(model.load_device, model.model.latent_format)
 
+    image_widget = ipyimage()
+    vbox = VBox([image_widget], layout=Layout(width="256px"))
+    display(vbox)
+
     pbar = comfy.utils.ProgressBar(steps)
     def callback(step, x0, x, total_steps):
         if x0_output_dict is not None:
@@ -95,6 +111,13 @@ def prepare_callback(model, steps, x0_output_dict=None):
         preview_bytes = None
         if previewer:
             preview_bytes = previewer.decode_latent_to_preview_image(preview_format, x0)
+            new_bytes = preview_bytes[1]
+            # preview_save = os.path.join(preview_save_path, f'preview_{idx+1:05d}.png')
+            # new_bytes.save(preview_save)
+            display_bytes = BytesIO()
+            new_bytes.save(display_bytes, format='PNG')
+            image_data = display_bytes.getvalue()
+            image_widget.value = image_data
         pbar.update_absolute(step + 1, total_steps, preview_bytes)
     return callback
 

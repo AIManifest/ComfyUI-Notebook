@@ -34,9 +34,9 @@ from PIL import Image as pilimage
 from PIL.PngImagePlugin import PngInfo
 import json
 from comfy_extras.nodes_canny import canny
-from custom_nodes.comfy_controlnet_preprocessors.nodes.util import common_annotator_call, img_np_to_tensor, skip_v1
-from custom_nodes.comfy_controlnet_preprocessors.v1 import midas, leres
-from custom_nodes.comfy_controlnet_preprocessors.v11 import zoe, normalbae
+# from custom_nodes.comfy_controlnet_preprocessors.nodes.util import common_annotator_call, img_np_to_tensor, skip_v1
+# from custom_nodes.comfy_controlnet_preprocessors.v1 import midas, leres
+# from custom_nodes.comfy_controlnet_preprocessors.v11 import zoe, normalbae
 import numpy as np
 from iprogress import iprogress
 from natsort import natsorted
@@ -202,9 +202,6 @@ from PIL import Image as pilimage
 from PIL.PngImagePlugin import PngInfo
 import json
 from comfy_extras.nodes_canny import canny
-from custom_nodes.comfy_controlnet_preprocessors.nodes.util import common_annotator_call, img_np_to_tensor, skip_v1
-from custom_nodes.comfy_controlnet_preprocessors.v1 import midas, leres
-from custom_nodes.comfy_controlnet_preprocessors.v11 import zoe, normalbae
 import numpy as np
 from iprogress import iprogress
 from natsort import natsorted
@@ -255,18 +252,18 @@ def apply_controlnet(positive, negative, control_net, image, strength, start_per
         return (out[0], out[1])
 
 def load_image(image_path):
-        # image_path = folder_paths.get_annotated_filepath(image)
-        i = pil_image.open(image_path)
-        i = ImageOps.exif_transpose(i)
-        image = i.convert("RGB")
-        image = np.array(image).astype(np.float32) / 255.0
-        image = torch.from_numpy(image)[None,]
-        if 'A' in i.getbands():
-            mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
-            mask = 1. - torch.from_numpy(mask)
-        else:
-            mask = torch.zeros((64,64), dtype=torch.float32, device="cpu")
-        return (image, mask)
+    # image_path = folder_paths.get_annotated_filepath(image)
+    i = pil_image.open(image_path)
+    i = ImageOps.exif_transpose(i)
+    image = i.convert("RGB")
+    image = np.array(image).astype(np.float32) / 255.0
+    image = torch.from_numpy(image)[None,]
+    if 'A' in i.getbands():
+        mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
+        mask = 1. - torch.from_numpy(mask)
+    else:
+        mask = torch.zeros((64,64), dtype=torch.float32, device="cpu")
+    return (image, mask)
 
 def load_lora(model, clip, lora_name, strength_model, strength_clip):
     loaded_lora = None
@@ -292,25 +289,24 @@ def load_lora(model, clip, lora_name, strength_model, strength_clip):
     del clip
     return (model_lora, clip_lora)
 
-def loadsdxl(sdxl_args):
+@torch.inference_mode()
+def loadsdxl(sdxlargs):
     start = time.time()
     loader = nodes.CheckpointLoaderSimple()
     out = loader.load_checkpoint(
-            sdxl_args.ckpt_name,
-            output_vae=True,
-            output_clip=True,
+            sdxlargs.ckpt_name,
+            # output_vae=True,
+            # output_clip=True,
             )
     
     model, clip, vae = out
     
     clear_output(wait=True)
     
-    get_device_memory()
-    
-    gc.collect()
-    torch.cuda.empty_cache()
-    torch.cuda.ipc_collect()
-    
+        
+    if sdxlargs.use_refiner:
+        return out
+
     end = time.time()
     print(f'model loaded in {end-start:.02f} seconds')
     return out
@@ -465,6 +461,7 @@ def runsdxl(sdxl_args, out, control_net):
                                   noise_mask=noise_mask, 
                                   callback=callback, 
                                   seed=sdxl_args.seed)
+
     samplez = latent.copy()
     samplez["samples"] = samples
     gc.collect()
@@ -491,6 +488,7 @@ def runsdxl(sdxl_args, out, control_net):
         image = vae.decode_tiled(samples)
     vaeimage = rearrange(image, 'b h w c -> b c h w')
 
+    output_images = []
     for im in vaeimage:
         im = to_pil_image(im)
         new_im = im
@@ -511,7 +509,9 @@ def runsdxl(sdxl_args, out, control_net):
             im.save(os.path.join(output_folder, f'{sdxl_args.saveprefix}_{count+1:05d}_.png'), pnginfo=metadata, compress_level=4)
         if sdxl_args.create_video_preview:
             create_video(preview_save_path, 5, f'{sdxl_args.saveprefix}_{count+1:05d}_.mp4')
+
+        output_images.append(im)
         count+=1
     get_device_memory()
 
-    return model, samples
+    return model, samples, output_images[0]

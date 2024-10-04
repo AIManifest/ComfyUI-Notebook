@@ -5,6 +5,16 @@ import latent_preview
 import torch
 import comfy.utils
 import node_helpers
+from torchvision.transforms.functional import to_pil_image
+from comfy import latent_formats
+from comfy.latent_formats import SDXL, SD15, Flux
+from IPython.display import display, clear_output
+from ipywidgets import Image, Layout, VBox
+
+from io import BytesIO
+from PIL import Image as pilimage
+
+from PIL.PngImagePlugin import PngInfo
 
 
 class BasicScheduler:
@@ -607,6 +617,51 @@ class SamplerCustomAdvanced:
 
         x0_output = {}
         callback = latent_preview.prepare_callback(guider.model_patcher, sigmas.shape[-1] - 1, x0_output)
+        #Preview Callback Setup
+        # preview_format = "PNG"
+        # if preview_format not in ["JPEG", "PNG"]:
+        #     preview_format = "JPEG"
+        
+        # class LatentFormat:
+        #     def process_in(self, latent):
+        #         return latent * self.scale_factor
+        
+        #     def process_out(self, latent):
+        #         return latent / self.scale_factor
+        # sd15 = False
+        # flux_model = True
+        # if not sd15:
+        #     latent_format = SDXL()
+        # elif not flux_model:
+        #     latent_format = SD15()
+        # else:
+        #     latent_format = Flux()
+
+        # use_preview = True
+        # if use_preview:
+        #     previewer = latent_preview.Latent2RGBPreviewer(latent_format.latent_rgb_factors)#get_previewer(device, model.model.latent_format)
+        # else:
+        #     previewer = latent_preview.get_previewer(device, model.model.latent_format)
+        # pbar = comfy.utils.ProgressBar(20)
+        
+        # image_widget = Image()
+        # vbox = VBox([image_widget], layout=Layout(width="256px"))
+        # display(vbox)
+    
+        # def callback(step, x0, x, total_steps):
+        #     preview_bytes = None
+        #     # idx = len(os.listdir(preview_save_path))
+        #     if previewer:
+        #         preview_bytes = previewer.decode_latent_to_preview_image(preview_format, x0)
+        #         if use_preview:
+        #             new_bytes = preview_bytes[1]
+        #             # preview_save = os.path.join(preview_save_path, f'preview_{idx+1:05d}.png')
+        #             # new_bytes.save(preview_save)
+        #             display_bytes = BytesIO()
+        #             new_bytes.save(display_bytes, format='PNG')
+        #             image_data = display_bytes.getvalue()
+        #             image_widget.value = image_data
+        #     pbar.update_absolute(step + 1, total_steps, preview_bytes)
 
         disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
         samples = guider.sample(noise.generate_noise(latent), latent_image, sampler, sigmas, denoise_mask=noise_mask, callback=callback, disable_pbar=disable_pbar, seed=noise.seed)

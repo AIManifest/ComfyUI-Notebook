@@ -1,51 +1,50 @@
 import os
-import cv2
-import xformers
-import xformers.ops
-from comfy import model_management
-import folder_paths
-from enum import Enum
-from tqdm.auto import tqdm
-import torch
-import cuda_malloc
-from comfy.model_management import VRAMState
-from IPython.display import clear_output
-from pytorch_lightning import seed_everything
-from PIL import Image as pil_image
-from PIL import ImageOps
-import numpy as np
-from einops import rearrange
-from comfy import model_management, sd
-from torchvision.transforms.functional import to_pil_image
-from comfy import latent_formats
-from comfy.latent_formats import SDXL
-from IPython.display import display, clear_output, HTML
+import gc
 import io
+import cv2
+import time
+import json
+import torch
 import nodes
 import comfy
-import importlib
-import latent_preview
-import gc
-import random
 import base64
-from comfy_extras import nodes_clip_sdxl
-import time
-from ipywidgets import Image, Layout, VBox
-from io import BytesIO
-from PIL import Image as pilimage
-from PIL.PngImagePlugin import PngInfo
-import json
-from comfy_extras.nodes_canny import canny
-from comfy_extras.nodes_video_model import ImageOnlyCheckpointLoader, SVD_img2vid_Conditioning, VideoLinearCFGGuidance
-from comfy_extras.nodes_images import SaveAnimatedWEBP
-from ComfyUI_VideoHelperSuite.videohelpersuite.nodes import VideoCombine
-from ComfyUI_Frame_Interpolation import FILM_VFI
-from custom_nodes.comfy_controlnet_preprocessors.nodes.util import common_annotator_call, img_np_to_tensor, skip_v1
-from custom_nodes.comfy_controlnet_preprocessors.v1 import midas, leres
-from custom_nodes.comfy_controlnet_preprocessors.v11 import zoe, normalbae
+import random
+import xformers
+import importlib
+import cuda_malloc
+import xformers.ops
+import folder_paths
+import latent_preview
 import numpy as np
-from iprogress import iprogress
+from enum import Enum
+from io import BytesIO
+from PIL import ImageOps
+from tqdm.auto import tqdm
+from einops import rearrange
 from natsort import natsorted
+from iprogress import iprogress
+from colors import process_image
+from comfy import latent_formats
+from PIL import Image as pilimage
+from comfy import model_management
+from PIL import Image as pil_image
+from comfy.latent_formats import SDXL
+from PIL.PngImagePlugin import PngInfo
+from comfy import model_management, sd
+from ipywidgets import Image, Layout, VBox
+from comfy_extras.nodes_canny import Canny
+from ComfyUI_Frame_Interpolation import FILM_VFI
+# from custom_nodes.comfy_controlnet_preprocessors.nodes.util import common_annotator_call, img_np_to_tensor, skip_v1
+# from custom_nodes.comfy_controlnet_preprocessors.v1 import midas, leres
+# from custom_nodes.comfy_controlnet_preprocessors.v11 import zoe, normalbae
+from comfy_extras.nodes_images import SaveAnimatedWEBP
+from IPython.display import display, clear_output, HTML
+from torchvision.transforms.functional import to_pil_image
+from ComfyUI_VideoHelperSuite.videohelpersuite.nodes import VideoCombine
+from comfy_extras.nodes_upscale_model import UpscaleModelLoader, ImageUpscaleWithModel
+from comfy_extras import nodes_flux, nodes_custom_sampler, nodes_model_advanced, nodes_sd3, nodes_clip_sdxl
+from comfy_extras.nodes_video_model import ImageOnlyCheckpointLoader, SVD_img2vid_Conditioning, VideoLinearCFGGuidance
+
 
 def get_device_memory():
     total_memory = torch.cuda.get_device_properties(0).total_memory
@@ -61,8 +60,6 @@ def get_device_memory():
     print(f"Reserved memory: {reserved_memory_gb:.2f} GB")
     print(f"Allocated memory: {allocated_memory_gb:.2f} GB")
     print(f"Free memory: {free_memory_gb:.2f} GB")
-
-get_device_memory()
 
 def apply_controlnet(positive, negative, control_net, image, strength, start_percent, end_percent):
         if strength == 0:
@@ -172,66 +169,6 @@ def create_video(image_folder, fps, video_name):
     cv2.destroyAllWindows()
     video.release()
 
-import os
-import cv2
-import xformers
-import xformers.ops
-from comfy import model_management
-import folder_paths
-from enum import Enum
-import torch
-import cuda_malloc
-from comfy.model_management import VRAMState
-from IPython.display import clear_output
-from pytorch_lightning import seed_everything
-from PIL import Image as pil_image
-from PIL import ImageOps
-import numpy as np
-from einops import rearrange
-from comfy import model_management, sd
-from torchvision.transforms.functional import to_pil_image
-from comfy import latent_formats
-from comfy.latent_formats import SDXL
-from IPython.display import display, clear_output
-import io
-import nodes
-import comfy
-import importlib
-import latent_preview
-import gc
-import random
-from comfy_extras import nodes_clip_sdxl
-import time
-from ipywidgets import Image, Layout, VBox
-from io import BytesIO
-from PIL import Image as pilimage
-from PIL.PngImagePlugin import PngInfo
-import json
-from comfy_extras.nodes_canny import canny
-from custom_nodes.comfy_controlnet_preprocessors.nodes.util import common_annotator_call, img_np_to_tensor, skip_v1
-from custom_nodes.comfy_controlnet_preprocessors.v1 import midas, leres
-from custom_nodes.comfy_controlnet_preprocessors.v11 import zoe, normalbae
-import numpy as np
-from iprogress import iprogress
-from natsort import natsorted
-
-def get_device_memory():
-    total_memory = torch.cuda.get_device_properties(0).total_memory
-    total_memory_gb = total_memory / (1024 ** 3)
-    reserved_memory = torch.cuda.memory_reserved(0)
-    reserved_memory_gb = reserved_memory / (1024 ** 3)
-    allocated_memory = torch.cuda.memory_allocated(0)
-    allocated_memory_gb = allocated_memory / (1024 ** 3)
-    free_memory = total_memory - allocated_memory
-    free_memory_gb = free_memory / (1024 ** 3)
-
-    print(f"Total memory: {total_memory_gb:.2f} GB")
-    print(f"Reserved memory: {reserved_memory_gb:.2f} GB")
-    print(f"Allocated memory: {allocated_memory_gb:.2f} GB")
-    print(f"Free memory: {free_memory_gb:.2f} GB")
-
-get_device_memory()
-
 def apply_controlnet(positive, negative, control_net, image, strength, start_percent, end_percent):
         if strength == 0:
             return (positive, negative)
@@ -261,18 +198,18 @@ def apply_controlnet(positive, negative, control_net, image, strength, start_per
         return (out[0], out[1])
 
 def load_image(image_path):
-        # image_path = folder_paths.get_annotated_filepath(image)
-        i = pil_image.open(image_path)
-        i = ImageOps.exif_transpose(i)
-        image = i.convert("RGB")
-        image = np.array(image).astype(np.float32) / 255.0
-        image = torch.from_numpy(image)[None,]
-        if 'A' in i.getbands():
-            mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
-            mask = 1. - torch.from_numpy(mask)
-        else:
-            mask = torch.zeros((64,64), dtype=torch.float32, device="cpu")
-        return (image, mask)
+    # image_path = folder_paths.get_annotated_filepath(image)
+    i = pil_image.open(image_path)
+    i = ImageOps.exif_transpose(i)
+    image = i.convert("RGB")
+    image = np.array(image).astype(np.float32) / 255.0
+    image = torch.from_numpy(image)[None,]
+    if 'A' in i.getbands():
+        mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
+        mask = 1. - torch.from_numpy(mask)
+    else:
+        mask = torch.zeros((64,64), dtype=torch.float32, device="cpu")
+    return (image, mask)
 
 def load_lora(model, clip, lora_name, strength_model, strength_clip):
     loaded_lora = None
@@ -332,30 +269,13 @@ def create_video(image_folder, fps, video_name):
     cv2.destroyAllWindows()
     video.release()
 
-
-import nodes
-import glob
-import os
-from PIL import Image as pil_image
-from PIL import ImageOps
-import numpy as np
-import torch
-import comfy
-from IPython.display import display
-from comfy_extras.nodes_upscale_model import UpscaleModelLoader, ImageUpscaleWithModel
-import sys
-from einops import rearrange
-from torchvision.transforms.functional import to_pil_image
-from tqdm.auto import tqdm
-import cv2
-
-# Load the comfy models
-comfy_upscaler = UpscaleModelLoader()
-loaded_upscaler = comfy_upscaler.load_model("4x_NMKD-YandereNeo-Lite_320k.pth")
-upscaler = ImageUpscaleWithModel()
-sd = comfy.utils.load_torch_file("/workspace/ComfyUI-Notebook/models/vae/sdxl_vae.safetensors")
-vae = comfy.sd.VAE(sd=sd)
-sharpened_upscaler = comfy_upscaler.load_model("4x-UltraSharp.pth")
+# # Load the comfy models
+# comfy_upscaler = UpscaleModelLoader()
+# loaded_upscaler = comfy_upscaler.load_model("4xLexicaHAT.pth")
+# upscaler = ImageUpscaleWithModel()
+# sd = comfy.utils.load_torch_file("/workspace/ComfyUI-Notebook/models/vae/sdxl_vae.safetensors")
+# vae = comfy.sd.VAE(sd=sd)
+# sharpened_upscaler = comfy_upscaler.load_model("OmniSR_X4_DF2K_epoch994.pth")
 
 # Define a function to upscale an image
 def upscale_image(image_path,loaded_upscaler):
@@ -526,6 +446,13 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
     
     negative = [[ncond, {"pooled_output": npooled, "width": sdxl_args.width, "height": sdxl_args.height, "crop_w": sdxl_args.crop_w, "crop_h": sdxl_args.crop_h, "target_width": sdxl_args.target_width, "target_height": sdxl_args.target_height}]]
 
+    if sdxl_args.imageheight > sdxl_args.imagewidth:
+            svd_height = 1024
+            svd_width = 576
+    else:
+        svd_height = 576
+        svd_width = 1024
+
     latentempty = nodes.EmptyLatentImage()
     latent = latentempty.generate(sdxl_args.imagewidth, sdxl_args.imageheight, sdxl_args.batch_size)
     latent = latent[0]
@@ -624,7 +551,6 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
     gc.collect()
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
-    get_device_memory()    
     
     use_refiner = True
     if use_refiner:
@@ -689,6 +615,7 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
         image = vae.decode_tiled(samples)
     vaeimage = rearrange(image, 'b h w c -> b c h w')
 
+    outputimages = []
     for im in vaeimage:
         im = to_pil_image(im)
         new_im = im
@@ -697,7 +624,17 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
         image_data = bytes_image.getvalue()
         image_widget = Image(value=image_data, format='png')
         vbox = VBox([image_widget], layout=Layout(width="512px"))
+        im.resize((svd_width, svd_height), pilimage.Resampling.LANCZOS)
         display(vbox)
+
+        image_widget1 = Image()
+        vbox1 = VBox([image_widget1], layout=Layout(width="256px"))
+        display(vbox1)
+        display_bytes1 = BytesIO()
+        new_im.save(display_bytes1, format='PNG')
+        image_data1 = display_bytes1.getvalue()
+        image_widget1.value = image_data1
+        outputimages.append(new_im)
 
         if sdxl_args.save_base_image:
             if not sdxl_args.disable_metadata:
@@ -809,7 +746,7 @@ def runsvd(sdxl_args, out, refiner_out, control_net):
         # animated_webp = svd_saver.save_images(images, svd_fps, svd_filename_prefix, svd_lossless, svd_quality, svd_method, num_frames=svd_num_frames, prompt=None, extra_pnginfo=None)
     get_device_memory()
 
-    return model, samples
+    return model, samples, outputimages[0]
 
 def batch_runsvd(sdxl_args):
     svd_conditioner = SVD_img2vid_Conditioning()
@@ -876,7 +813,7 @@ def batch_runsvd(sdxl_args):
             if use_preview:
                 new_bytes = preview_bytes[1]
                 preview_save = os.path.join(preview_save_path, f'preview_{idx+1:05d}.png')
-                new_bytes.save(preview_save)
+                # new_bytes.save(preview_save)
                 display_bytes = BytesIO()
                 new_bytes.save(display_bytes, format='PNG')
                 image_data = display_bytes.getvalue()
@@ -886,10 +823,25 @@ def batch_runsvd(sdxl_args):
     frame_index = 0
     svd_pbar = tqdm(total=len(batch_folder),desc='rendering')
     while True:
-        frame_name = batch_folder[frame_index]
-        frame_path = os.path.join(sdxl_args.init_image_folder_path_for_svd, frame_name)
-        frame_index += 1
-        print(f'rendering frame: {frame_name}')
+        if frame_index >= len(batch_folder):
+            print("No more images in the folder.")
+            break
+        else:
+            frame_name = batch_folder[frame_index]
+            frame_path = os.path.join(sdxl_args.init_image_folder_path_for_svd, frame_name)
+            frame_index += 1
+            print(f'rendering frame: {frame_name}')
+
+        image_info = cv2.imread(frame_path)
+        imageheight, imagewidth, _ = image_info.shape
+
+        if imageheight > imagewidth:
+            svd_height = 1024
+            svd_width = 576
+        else:
+            svd_height = 576
+            svd_height = 1024
+            
 
         # Load and process the frame
         latent, svd_mask = load_image(frame_path)
@@ -961,4 +913,417 @@ def batch_runsvd(sdxl_args):
         gc.collect()
         torch.cuda.empty_cache()
 
-    return model, samples
+    return new_svd_model, svd_samples, images, vfi_images[0]
+    
+def animate_svd(sdxl_args):
+    #Initiate Vars For SVD
+    svd_conditioner = SVD_img2vid_Conditioning()
+    svd_guidance = VideoLinearCFGGuidance()
+    svd_saver = SaveAnimatedWEBP()
+    svd_model, svd_clipvision, svd_vae = sdxl_args.svd_loaded
+    clear_output(wait=True)
+    # svd_ckpt_name = sdxl_args.svd_ckpt_name
+    # svd_min_cfg = sdxl_args.svd_min_cfg
+    # svd_width = sdxl_args.svd_width
+    # svd_height = sdxl_args.svd_height
+    # svd_video_frames = sdxl_args.svd_video_frames
+    # svd_motion_bucket_id = sdxl_args.svd_motion_bucket_id
+    # svd_fps = sdxl_args. svd_fps
+    # svd_augmentation_level = sdxl_args.svd_augmentation_level
+    # svd_sampler = sdxl_args.svd_sampler
+    # svd_scheduler = sdxl_args.svd_scheduler
+    # new_svd_model = svd_guidance.patch(svd_model, svd_min_cfg)[0]
+    # svd_denoise = 1.00
+    
+    #Preview Vars/Ops
+    preview_format = "PNG"
+    if preview_format not in ["JPEG", "PNG"]:
+        preview_format = "JPEG"
+    
+    class LatentFormat:
+        def process_in(self, latent):
+            return latent * self.scale_factor
+    
+        def process_out(self, latent):
+            return latent / self.scale_factor
+    latent_format = SDXL()
+    use_preview = sdxl_args.use_preview
+    if use_preview:
+        previewer = latent_preview.Latent2RGBPreviewer(latent_format.latent_rgb_factors)#get_previewer(device, model.model.latent_format)
+    else:
+        previewer = latent_preview.get_previewer(device, model.model.latent_format)
+
+    #Progress Bar
+    pbar = comfy.utils.ProgressBar(sdxl_args.steps)
+    
+    #Display Ops
+    image_widget = Image()
+    vbox = VBox([image_widget], layout=Layout(width="256px"))
+    display(vbox)
+
+    #Output Folder Ops
+    output_folder = sdxl_args.output_folder
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder, exist_ok=True)
+
+    #Output Folder Count
+    count = len(os.listdir(output_folder))
+    
+    #Initiate Preview Saves
+    preview_save_path = os.path.join(sdxl_args.output_folder, f'{sdxl_args.saveprefix}_{count+1:05d}')
+    if not os.path.exists(preview_save_path):
+        os.makedirs(preview_save_path, exist_ok=True)
+
+    #Batch Folder From Which to Load the Images From
+    batch_folder = sorted([f for f in os.listdir(sdxl_args.init_image_folder_path_for_svd) if f.lower().endswith(('.png', '.jpeg', '.jpg'))])
+
+    #Callback Func for Sampling Progress Display
+    def callback(step, x0, x, total_steps):
+        preview_bytes = None
+        idx = len(os.listdir(preview_save_path))
+        if previewer:
+            preview_bytes = previewer.decode_latent_to_preview_image(preview_format, x0)
+            if use_preview:
+                new_bytes = preview_bytes[1]
+                preview_save = os.path.join(preview_save_path, f'preview_{idx+1:05d}.png')
+                # new_bytes.save(preview_save)
+                display_bytes = BytesIO()
+                new_bytes.save(display_bytes, format='PNG')
+                image_data = display_bytes.getvalue()
+                image_widget.value = image_data
+        pbar.update_absolute(step + 1, total_steps, preview_bytes)
+
+    #Temp Folder and Vars for Saving Operated Image
+    outpath = "/workspace/tmprun/tmpimages"
+    os.makedirs(outpath, exist_ok=True)
+    outlist = os.listdir(outpath)
+    pathlist = [f for f in outlist if f.endswith(".png")]
+    count = len(pathlist)
+
+    #Initiate Different Indexes for Ops in the Loop
+    frame_index = 0
+    idx = 0
+    last_frame_index = None
+    svd_pbar = tqdm(total=len(batch_folder),desc='rendering')
+
+    #Load VAE to Encode and Decode Generated Image
+    sd = comfy.utils.load_torch_file("/workspace/ComfyUI-Notebook/models/vae/sdxl_vae.safetensors")
+    vae = comfy.sd.VAE(sd=sd)
+
+    #Loop Initiation
+    while True:
+        svd_ckpt_name = sdxl_args.svd_ckpt_name
+        svd_min_cfg = sdxl_args.svd_min_cfg
+        svd_width = sdxl_args.svd_width
+        svd_height = sdxl_args.svd_height
+        svd_video_frames = sdxl_args.svd_video_frames
+        svd_motion_bucket_id = sdxl_args.svd_motion_bucket_id
+        svd_fps = sdxl_args.svd_fps
+        svd_augmentation_level = sdxl_args.svd_augmentation_level
+        svd_sampler = sdxl_args.svd_sampler
+        svd_scheduler = sdxl_args.svd_scheduler
+        new_svd_model = svd_guidance.patch(svd_model, svd_min_cfg)[0]
+        svd_denoise = 1.00
+        #Set Seed for Every Iteration
+        svd_seed = seed_everything(torch.randint(0, 2**32 - 1, (1,)).item())
+        index_incrementer = 3
+
+        # Handle prompt logic
+        if isinstance(sdxl_args.prompt, list):
+            flux_prompt = sdxl_args.prompt[(frame_index // index_incrementer) % len(sdxl_args.prompt)]  # Use the same prompt for 7 idxes
+        else:
+            flux_prompt = sdxl_args.prompt  # Use the same prompt if it's a single string
+
+        print(f"Running with Prompt: {flux_prompt} on Index: {frame_index}")
+
+        #First Frame Initiation        
+        if last_frame_index is None:
+            frame_name = batch_folder[frame_index]
+            frame_path = os.path.join(sdxl_args.init_image_folder_path_for_svd, frame_name)
+            idx+=1
+            print(f'rendering frame: {frame_name}')
+            image_info = cv2.imread(frame_path)
+            imageheight, imagewidth, _ = image_info.shape
+            flux_denoise = 1.00
+            flux_cfg = 2.5
+            
+        #Continuing The Loop with the last image
+        else:
+            pil_last_image = np.array(last_frame_index)
+            imageheight, imagewidth, _ = pil_last_image.shape
+            idx-=1
+            flux_denoise = 1.00
+            flux_cfg = 3.5
+        
+        frame_index+=1
+
+        if frame_index % index_incrementer == 0:
+            print(f"Running with Full Denoise to Add Detail on Frame Index: {frame_index}")
+            flux_denoise = 1.00
+            
+        #Set Image Dimensions For SVD Based on the Input Image
+        if imageheight > imagewidth:
+            svd_height = 1024
+            svd_width = 576
+            flux_height = 1344
+            flux_width = 768
+        else:
+            svd_height = 576
+            svd_width = 1024
+            flux_height = 768
+            flux_width = 1344
+            
+        # Load and process the frame
+        if last_frame_index is None:
+            latent, svd_mask = load_image(frame_path)
+            last_frame_index_frame_path = os.path.join(outpath, f'{idx:05d}_.png')
+        else:
+            print(f'Trying to load: {last_frame_index_frame_path}')
+            print(f"Running with Index: {idx}")
+            last_frame_name = pathlist[idx]
+            last_frame_index_frame_path = os.path.join(outpath, last_frame_name)
+            latent, svd_mask = load_image(last_frame_index_frame_path)
+            idx+=1
+
+        svd_positive, svd_negative, svd_latent = svd_conditioner.encode(svd_clipvision, latent, svd_vae, svd_width, svd_height, svd_video_frames, svd_motion_bucket_id, svd_fps, svd_augmentation_level)
+        svd_latent = svd_latent["samples"]
+    
+        noise_mask = None
+        batch_inds = None
+        svd_noise = comfy.sample.prepare_noise(svd_latent, svd_seed, batch_inds)
+        
+        svd_samples = comfy.sample.sample(sdxl_args,
+                                      new_svd_model, 
+                                      svd_noise, 
+                                      sdxl_args.svd_steps, 
+                                      sdxl_args.svd_cfg, 
+                                      svd_sampler, 
+                                      svd_scheduler,
+                                      svd_positive, 
+                                      svd_negative, 
+                                      svd_latent, 
+                                      denoise=svd_denoise, 
+                                      disable_noise=sdxl_args.refinerdisable_noise, 
+                                      start_step=sdxl_args.svd_start_step, 
+                                      last_step=sdxl_args.svd_last_step, 
+                                      force_full_denoise=sdxl_args.refinerforce_full_denoise, 
+                                      noise_mask=noise_mask, 
+                                      callback=callback, 
+                                      seed=svd_seed)
+        
+        images = svd_vae.decode(svd_samples)
+        # images = rearrange(images, 'b h w c -> b c h w')
+        svd_fps_out = sdxl_args.svd_fps_out
+        svd_filename_prefix = sdxl_args.saveprefix
+        svd_lossless = sdxl_args.svd_lossless
+        svd_quality = sdxl_args.svd_quality
+        svd_method = sdxl_args.svd_method
+        svd_num_frames = sdxl_args.svd_num_frames
+        svd_multiplier = sdxl_args.svd_multiplier
+        svd_clear_cache_after_n_frames = sdxl_args.svd_clear_cache_after_n_frames
+        film_name = sdxl_args.film_name
+        
+        film_vfi = FILM_VFI()
+        videocombine = VideoCombine()
+        
+        vfi_images = film_vfi.vfi(film_name,
+                                images,
+                                clear_cache_after_n_frames=svd_clear_cache_after_n_frames,
+                                multiplier=svd_multiplier,
+                                optional_interpolation_states = None)
+        
+        samples = videocombine.combine_video(vfi_images[0],
+                                            sdxl_args.svd_fps_out,
+                                            sdxl_args.svd_loop_count,
+                                            filename_prefix=sdxl_args.saveprefix,
+                                            format=sdxl_args.svd_format,
+                                            pingpong=False,
+                                            save_output=True,
+                                            prompt=None,
+                                            extra_pnginfo=None,
+                                            audio=None,
+                                            unique_id=None,
+                                            manual_format_widgets=None,
+                                            batch_manager=None)
+        # animated_webp = svd_saver.save_images(images, svd_fps, svd_filename_prefix, svd_lossless, svd_quality, svd_method, num_frames=svd_num_frames, prompt=None, extra_pnginfo=None)
+        get_device_memory()
+        svd_pbar.update()
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # if last_frame_index is None:
+        last_frame_index = images[-1]
+        # else:
+            # last_frame_index = images[0]
+        print(f'Last Frame 1 Index Type: {type(last_frame_index)}')
+        print(f'Last Frame 1 Index Shape: {last_frame_index.shape}')
+        
+        last_frame_index = last_frame_index.permute(2, 0, 1)  # [C, H, W]
+
+        print(f'Last Frame 3 Index Type: {type(last_frame_index)}')
+        print(f'Last Frame 3 Index Shape: {last_frame_index.shape}')
+        last_frame_index = to_pil_image(last_frame_index)
+
+        last_frame_index.save(last_frame_index_frame_path, format="PNG")
+        print(f'Saved frame to: {last_frame_index_frame_path}')
+
+        use_flux = True
+        use_sdxl = not use_flux
+        match_colors = False
+        if use_flux:                
+            if match_colors:
+                print("Matching Colors for Temporal Consistency")
+                sample_alpha = 1.00 if not frame_index % index_incrementer == 0 else 0.70
+                sample_image_path = "/workspace/1345723.png"
+                last_frame_index = process_image(last_frame_index_frame_path, sample_image_path, sample_alpha, "HM-MVGD-HM", frame_index)
+                last_frame_index.save(last_frame_index_frame_path, format="PNG")
+            print("Sampling the Image for Quality")
+            last_frame_index = run_flux(flux_prompt, sdxl_args, width=flux_width, 
+                                        height=flux_height, input_latent=last_frame_index_frame_path, cfg=flux_cfg, 
+                                        flux_base_guidance=1.15, flux_min_guidance=0.5, seed=svd_seed, flux_denoise=flux_denoise,
+                                       flux_steps=30, flux_sampler="euler")
+
+            last_frame_index.resize((svd_width, svd_height), pilimage.Resampling.LANCZOS)
+            last_frame_index.save(last_frame_index_frame_path, format="PNG")
+            
+        image_widget1 = Image()
+        vbox1 = VBox([image_widget1], layout=Layout(width="256px"))
+        display(vbox1)
+        display_bytes1 = BytesIO()
+        last_frame_index.save(display_bytes1, format='PNG')
+        image_data1 = display_bytes1.getvalue()
+        image_widget1.value = image_data1
+
+        # clear_output(wait=True)
+
+        # del svd_clipvision
+        # del svd_vae
+        # del new_svd_model
+        # del svd_noise
+        # del vae
+        # del svd_samples, images
+        # del new_svd_model, svd_positive, svd_negative, svd_latent, svd_noise, svd_samples, images
+
+    # return new_svd_model, svd_samples, images, vfi_images[0]
+    return vfi_images[0]
+
+def seed_everything(seed, deterministic=False):
+    print(f'Set global seed to {seed}')
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    if deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    return seed
+
+def run_flux(prompt, sdxl_args, width=768, height=1344, input_latent=None, unet_name="flux1-dev.safetensors",
+             clip_l="clip_l.safetensors", t5text="t5xxl_fp16.safetensors", weight_dtype="default",
+             clip_dir='/content/flux_outputs', seed=torch.randint(0, 2**32 - 1, (1,)).item(), cfg=3.5,
+             flux_base_guidance=1.15, flux_min_guidance=0.5, flux_denoise=1.00, flux_steps=20, flux_sampler="euler"):
+    # Set seed if needed
+    if seed == -1:
+        seed = torch.randint(0, 2**32 - 1, (1,)).item()
+    seed = seed_everything(seed)
+
+    # Load UNet and apply patches
+    flux_model = nodes.UNETLoader().load_unet(unet_name, weight_dtype)
+    flux_model = flux_model[0]
+    flux_model = nodes_model_advanced.ModelSamplingFlux().patch(flux_model, flux_base_guidance, flux_min_guidance, width, height)
+    flux_model = flux_model[0]
+
+    # Load clip model
+    clip = nodes.DualCLIPLoader().load_clip(t5text, clip_l, "flux")
+    clip = clip[0]
+
+    # Encode the text prompt
+    clip_text_encoding = nodes.CLIPTextEncode().encode(clip, prompt)
+    clip_text_encoding = clip_text_encoding[0]
+    negative_clip_text_encoding = nodes.CLIPTextEncode().encode(clip, "text")
+    negative_clip_text_encoding = negative_clip_text_encoding[0]
+
+    # Load VAE
+    vae = nodes.VAELoader().load_vae("ae.safetensors")
+    vae = vae[0]
+
+    # Generate latent image
+    if input_latent is None:
+        latentempty = nodes_sd3.EmptySD3LatentImage().generate(width, height, batch_size=1)
+        latent = latentempty[0]
+    else:
+        emptylatent = {}
+        latent, _ = load_image(input_latent)
+        controlnet_latent = latent
+        latent = vae.encode(latent)
+        emptylatent["samples"] = latent
+        latent = emptylatent
+
+    run_controlnet = True
+    if run_controlnet and input_latent is not None:
+        print("Running ControlNet")
+        control_net = nodes.ControlNetLoader().load_controlnet("flux-canny-controlnet-v3.safetensors")
+        control_net = control_net[0]
+        controlnet_latent = pilimage.open(input_latent)
+        controlnet_latent.resize((width, height), pilimage.Resampling.LANCZOS)
+        controlnet_latent.save(input_latent, format="PNG")
+        controlnet_latent, _ = load_image(input_latent)
+        clip_text_encoding = run_flux_controlnet(clip_text_encoding, negative_clip_text_encoding, control_net, controlnet_latent, vae)
+
+    # clip_text_encoding = nodes_flux.FluxGuidance().append(clip_text_encoding, cfg)
+    # clip_text_encoding = clip_text_encoding[0]
+    # Get sigmas for sampling
+    sigmas = nodes_custom_sampler.BasicScheduler().get_sigmas(flux_model, "simple", flux_steps, flux_denoise)
+    sigmas = sigmas[0]
+
+    # Apply guidance
+    print("Running with Exposed Guider")
+    guider = comfy.samplers.CFGGuider(sdxl_args, flux_model)
+    guider.inner_set_conds({"positive": clip_text_encoding})
+
+    # Select sampler and generate noise
+    print(f"Running with Sampler: {flux_sampler}")
+    sampler = comfy.samplers.sampler_object(sdxl_args, flux_sampler)
+    noise = nodes_custom_sampler.Noise_RandomNoise(seed).generate_noise(latent)
+
+    # Create output directory if it doesn't exist
+    if not os.path.exists(clip_dir):
+        os.makedirs(clip_dir, exist_ok=True)
+    
+    name_length = len([f for f in os.listdir(clip_dir) if os.path.isfile(os.path.join(clip_dir, f))])
+    flux_outpath = os.path.join(clip_dir, f"flux_{name_length}.png")
+
+    # Sampling and image generation
+    samples = nodes_custom_sampler.SamplerCustomAdvanced().sample(
+        nodes_custom_sampler.Noise_RandomNoise(seed), guider, sampler, sigmas, latent
+    )
+    output_samples = samples[0]["samples"]
+
+    # Clear cache
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    x = output_samples.cuda()
+
+    # Decode the latent samples to an image
+    image = vae.decode(x)
+    vaeimage = rearrange(image, 'b h w c -> b c h w')
+
+    output_images = []
+    for batch_number, sample in enumerate(vaeimage):
+        img = to_pil_image(sample)
+        bytes_image = BytesIO()
+        img.save(bytes_image, format='PNG')
+        img.save(flux_outpath)
+        output_images.append(img)
+
+    del flux_model, clip, clip_text_encoding, latent, sigmas, guider, noise, vae, seed, cfg
+    
+    return output_images[0]
+
+def run_flux_controlnet(clip_text_encoding, negative_clip_text_encoding, control_net, input_image, vae):
+    image = Canny().detect_edge(input_image, 0.2, 0.4)
+    image = image[0]
+    clip_text_encoding, _ = nodes.ControlNetApplyAdvanced().apply_controlnet(clip_text_encoding, negative_clip_text_encoding, control_net, image, 0.6, 0.00, 1.00, vae=vae)
+    return clip_text_encoding
