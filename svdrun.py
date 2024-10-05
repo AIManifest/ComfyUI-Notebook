@@ -1026,7 +1026,7 @@ def animate_svd(sdxl_args):
         svd_denoise = 1.00
         #Set Seed for Every Iteration
         svd_seed = seed_everything(torch.randint(0, 2**32 - 1, (1,)).item())
-        index_incrementer = 3
+        index_incrementer = 5
 
         # Handle prompt logic
         if isinstance(sdxl_args.prompt, list):
@@ -1052,7 +1052,7 @@ def animate_svd(sdxl_args):
             pil_last_image = np.array(last_frame_index)
             imageheight, imagewidth, _ = pil_last_image.shape
             idx-=1
-            flux_denoise = 1.00
+            flux_denoise = 0.8
             flux_cfg = 3.5
         
         frame_index+=1
@@ -1143,7 +1143,7 @@ def animate_svd(sdxl_args):
                                             extra_pnginfo=None,
                                             audio=None,
                                             unique_id=None,
-                                            manual_format_widgets=None,
+                                            manual_format_widgets={'pix_fmt': 'yuv420p', 'crf': 17, 'save_metadata': True},
                                             batch_manager=None)
         # animated_webp = svd_saver.save_images(images, svd_fps, svd_filename_prefix, svd_lossless, svd_quality, svd_method, num_frames=svd_num_frames, prompt=None, extra_pnginfo=None)
         get_device_memory()
@@ -1167,34 +1167,43 @@ def animate_svd(sdxl_args):
         last_frame_index.save(last_frame_index_frame_path, format="PNG")
         print(f'Saved frame to: {last_frame_index_frame_path}')
 
+        video_display_list = [f for f in os.listdir(os.path.join(os.path.dirname(__file__), "output")) if f.endswith(".mp4")]
+        video_display_path = os.path.join(os.path.dirname(__file__), f"output/{video_display_list[-1]}")
+        def file_to_base64(path):
+            with open(path, "rb") as file:
+                encoded = base64.b64encode(file.read()).decode("utf-8")
+            return encoded
+        
+        video_base64 = file_to_base64(video_display_path)
+        video_html = f"""
+        <video width="640" height="480" controls>
+          <source src="data:video/mp4;base64,{video_base64}" type="video/mp4">
+          Your browser does not support the video tag.
+        </video>
+        """
+        display(HTML(video_html))
+        
         use_flux = True
         use_sdxl = not use_flux
-        match_colors = False
+        match_colors = True
         if use_flux:                
             if match_colors:
                 print("Matching Colors for Temporal Consistency")
                 sample_alpha = 1.00 if not frame_index % index_incrementer == 0 else 0.70
-                sample_image_path = "/workspace/1345723.png"
-                last_frame_index = process_image(last_frame_index_frame_path, sample_image_path, sample_alpha, "HM-MVGD-HM", frame_index)
+                first_frame_path = frame_path
+                last_frame_index = process_image(last_frame_index_frame_path, first_frame_path, sample_alpha, "HM-MVGD-HM", frame_index)
                 last_frame_index.save(last_frame_index_frame_path, format="PNG")
             print("Sampling the Image for Quality")
             last_frame_index = run_flux(flux_prompt, sdxl_args, width=flux_width, 
                                         height=flux_height, input_latent=last_frame_index_frame_path, cfg=flux_cfg, 
                                         flux_base_guidance=1.15, flux_min_guidance=0.5, seed=svd_seed, flux_denoise=flux_denoise,
-                                       flux_steps=30, flux_sampler="euler")
+                                       flux_steps=30, flux_sampler="heunpp2")
 
             last_frame_index.resize((svd_width, svd_height), pilimage.Resampling.LANCZOS)
             last_frame_index.save(last_frame_index_frame_path, format="PNG")
-            
-        image_widget1 = Image()
-        vbox1 = VBox([image_widget1], layout=Layout(width="256px"))
-        display(vbox1)
-        display_bytes1 = BytesIO()
-        last_frame_index.save(display_bytes1, format='PNG')
-        image_data1 = display_bytes1.getvalue()
-        image_widget1.value = image_data1
 
-        # clear_output(wait=True)
+        if frame_index % (index_incrementer - 1) == 0:
+            clear_output(wait=True)
 
         # del svd_clipvision
         # del svd_vae
@@ -1222,7 +1231,8 @@ def seed_everything(seed, deterministic=False):
 def run_flux(prompt, sdxl_args, width=768, height=1344, input_latent=None, unet_name="flux1-dev.safetensors",
              clip_l="clip_l.safetensors", t5text="t5xxl_fp16.safetensors", weight_dtype="default",
              clip_dir='/content/flux_outputs', seed=torch.randint(0, 2**32 - 1, (1,)).item(), cfg=3.5,
-             flux_base_guidance=1.15, flux_min_guidance=0.5, flux_denoise=1.00, flux_steps=20, flux_sampler="euler"):
+             flux_base_guidance=1.15, flux_min_guidance=0.5, flux_denoise=1.00, flux_steps=20, flux_sampler="euler",
+             flux_image_display="256px"):
     # Set seed if needed
     if seed == -1:
         seed = torch.randint(0, 2**32 - 1, (1,)).item()
@@ -1244,6 +1254,9 @@ def run_flux(prompt, sdxl_args, width=768, height=1344, input_latent=None, unet_
     negative_clip_text_encoding = nodes.CLIPTextEncode().encode(clip, "text")
     negative_clip_text_encoding = negative_clip_text_encoding[0]
 
+    clip_text_encoding = nodes_flux.FluxGuidance().append(clip_text_encoding, cfg)
+    clip_text_encoding = clip_text_encoding[0]
+    
     # Load VAE
     vae = nodes.VAELoader().load_vae("ae.safetensors")
     vae = vae[0]
@@ -1271,8 +1284,6 @@ def run_flux(prompt, sdxl_args, width=768, height=1344, input_latent=None, unet_
         controlnet_latent, _ = load_image(input_latent)
         clip_text_encoding = run_flux_controlnet(clip_text_encoding, negative_clip_text_encoding, control_net, controlnet_latent, vae)
 
-    # clip_text_encoding = nodes_flux.FluxGuidance().append(clip_text_encoding, cfg)
-    # clip_text_encoding = clip_text_encoding[0]
     # Get sigmas for sampling
     sigmas = nodes_custom_sampler.BasicScheduler().get_sigmas(flux_model, "simple", flux_steps, flux_denoise)
     sigmas = sigmas[0]
@@ -1317,6 +1328,13 @@ def run_flux(prompt, sdxl_args, width=768, height=1344, input_latent=None, unet_
         img.save(bytes_image, format='PNG')
         img.save(flux_outpath)
         output_images.append(img)
+        image_widget1 = Image()
+        vbox1 = VBox([image_widget1], layout=Layout(width=flux_image_display))
+        display(vbox1)
+        display_bytes1 = BytesIO()
+        img.save(display_bytes1, format='PNG')
+        image_data1 = display_bytes1.getvalue()
+        image_widget1.value = image_data1
 
     del flux_model, clip, clip_text_encoding, latent, sigmas, guider, noise, vae, seed, cfg
     
@@ -1325,5 +1343,5 @@ def run_flux(prompt, sdxl_args, width=768, height=1344, input_latent=None, unet_
 def run_flux_controlnet(clip_text_encoding, negative_clip_text_encoding, control_net, input_image, vae):
     image = Canny().detect_edge(input_image, 0.2, 0.4)
     image = image[0]
-    clip_text_encoding, _ = nodes.ControlNetApplyAdvanced().apply_controlnet(clip_text_encoding, negative_clip_text_encoding, control_net, image, 0.6, 0.00, 1.00, vae=vae)
+    clip_text_encoding, _ = nodes.ControlNetApplyAdvanced().apply_controlnet(clip_text_encoding, negative_clip_text_encoding, control_net, image, 0.4, 0.00, 1.00, vae=vae)
     return clip_text_encoding
